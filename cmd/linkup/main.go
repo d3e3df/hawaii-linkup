@@ -5,13 +5,14 @@ import (
 	"log"
 
 	"hawaii-linkup/internal/repository/memory"
-	"hawaii-linkup/internal/service/eligibility"
 	"hawaii-linkup/internal/service/discovery"
+	"hawaii-linkup/internal/service/eligibility"
 	"hawaii-linkup/internal/service/feed"
+	"hawaii-linkup/internal/service/interaction"
 )
 
 func main() {
-  	if err := runDiscovery(memory.NewDemoStore()); err != nil {
+	if err := runDiscovery(memory.NewDemoStore()); err != nil {
 		log.Fatalf("discovery: %v", err)
 	}
 	if err := runFeed(memory.NewDemoStore()); err != nil {
@@ -19,6 +20,9 @@ func main() {
 	}
 	if err := runEligibility(memory.NewDemoStore()); err != nil {
 		log.Fatalf("eligibility: %v", err)
+	}
+	if err := runInteraction(memory.NewDemoStore()); err != nil {
+		log.Fatalf("interaction: %v", err)
 	}
 }
 
@@ -85,6 +89,27 @@ func runEligibility(store *memory.Store) error {
 
 	_, err := svc.CanLike("u1", "nobody")
 	fmt.Println("несуществующий пользователь:", err)
-    fmt.Println()
-    return nil
+	fmt.Println()
+	return nil
+}
+
+// runInteraction - контракт D: формирование результата взаимодействия
+func runInteraction(store *memory.Store) error {
+	fmt.Println("=== D. Interaction ===")
+	svc := interaction.NewService(store)
+
+	pairs := [][2]string{
+		{"u1", "u2"}, // match
+		{"u1", "u3"}, // pending
+		{"u1", "u5"}, // rejected
+	}
+	for _, p := range pairs {
+		outcome, err := svc.Like(p[0], p[1])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s лайкает %s: %s\n", p[0], p[1], outcome)
+	}
+	fmt.Println()
+	return nil
 }
