@@ -12,7 +12,10 @@ func NewDemoStore() *Store {
 	s.AddUser(domain.User{ID: "u6", Name: "Егор", Age: 35, City: "Москва", Interests: []string{"travel"}, Active: true})
 
 	s.Block("u1", "u4")
-	_ = s.SaveLike("u1", "u6")
-	_ = s.SaveLike("u2", "u1")
+	for _, like := range [][2]string{{"u1", "u6"}, {"u2", "u1"}} {
+		if err := s.SaveLike(like[0], like[1]); err != nil {
+			panic(err)
+		}
+	}
 	return s
 }

@@ -86,7 +86,7 @@ func (s *Store) HasLiked(from, to string) (bool, error) {
 
 // LikedIDs возвращает ID всех, кого лайкнул userID
 func (s *Store) LikedIDs(userID string) ([]string, error) {
-	ids := []string{}
+	ids := make([]string, 0, len(s.likes[userID]))
 	for id := range s.likes[userID] {
 		ids = append(ids, id)
 	}
