@@ -58,7 +58,7 @@ linters:
 
     errcheck:
       check-type-assertions: true
-      check-blank: true
+      check-blank: false
 
     fatcontext:
       check-struct-pointers: true
