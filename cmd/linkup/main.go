@@ -1,14 +1,17 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"hawaii-linkup/internal/repository/memory"
 	"hawaii-linkup/internal/service/discovery"
 	"hawaii-linkup/internal/service/eligibility"
 	"hawaii-linkup/internal/service/feed"
 	"hawaii-linkup/internal/service/interaction"
+	"hawaii-linkup/internal/service/reaction"
 )
 
 func main() {
@@ -23,6 +26,9 @@ func main() {
 	}
 	if err := runInteraction(memory.NewDemoStore()); err != nil {
 		log.Fatalf("interaction: %v", err)
+	}
+	if err := runReaction(memory.NewDemoStore()); err != nil {
+		log.Fatalf("reaction: %v", err)
 	}
 }
 
@@ -111,5 +117,61 @@ func runInteraction(store *memory.Store) error {
 		fmt.Printf("%s лайкает %s: %s\n", p[0], p[1], outcome)
 	}
 	fmt.Println()
+	return nil
+}
+
+// runReaction - ЛР2: лайк, повтор, ответ, повтор и чтение лент до и после
+func runReaction(store *memory.Store) error {
+	fmt.Println("=== ЛР2. Реакция и взаимность ===")
+	reactions := reaction.NewService(store)
+	feeds := feed.NewService(store)
+
+	if err := printFeeds(feeds, "до"); err != nil {
+		return err
+	}
+
+	steps := []struct {
+		title         string
+		actor, target string
+	}{
+		{"1) Вера лайкает Бориса", "u3", "u2"},
+		{"2) Вера лайкает Бориса (повтор)", "u3", "u2"},
+		{"3) Борис лайкает Веру (ответ)", "u2", "u3"},
+		{"4) Борис лайкает Веру (повтор)", "u2", "u3"},
+	}
+	for _, st := range steps {
+		res, err := reactions.Like(st.actor, st.target)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s: %s, изменено=%v, лайков в паре=%d\n", st.title, res.Outcome, res.Changed, res.Likes)
+	}
+
+	_, err := reactions.Like("u3", "u5")
+	if !errors.Is(err, reaction.ErrNotAllowed) {
+		return fmt.Errorf("ожидался отказ, got %v", err)
+	}
+	fmt.Println("5) Вера лайкает Дину: отказ:", err)
+
+	if err := printFeeds(feeds, "после"); err != nil {
+		return err
+	}
+	fmt.Println()
+	return nil
+}
+
+// printFeeds печатает ленты Веры и Бориса
+func printFeeds(feeds *feed.Service, when string) error {
+	for _, p := range []struct{ id, name string }{{"u3", "Веры"}, {"u2", "Бориса"}} {
+		users, err := feeds.Feed(p.id, 10)
+		if err != nil {
+			return err
+		}
+		names := []string{}
+		for _, u := range users {
+			names = append(names, u.Name)
+		}
+		fmt.Printf("Лента %s %s: %s\n", p.name, when, strings.Join(names, ", "))
+	}
 	return nil
 }
