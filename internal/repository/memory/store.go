@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"slices"
 
 	"hawaii-linkup/internal/domain"
@@ -9,13 +10,13 @@ import (
 type Store struct {
 	users  []domain.User
 	blocks map[string]map[string]bool
-	likes  map[string]map[string]bool
+	pairs  map[domain.PairKey]domain.Pair
 }
 
 func NewStore() *Store {
 	return &Store{
 		blocks: make(map[string]map[string]bool),
-		likes:  make(map[string]map[string]bool),
+		pairs:  make(map[domain.PairKey]domain.Pair),
 	}
 }
 
@@ -70,25 +71,55 @@ func (s *Store) BlockedIDs(userID string) ([]string, error) {
 	return ids, nil
 }
 
-// SaveLike сохраняет лайк from -> to
-func (s *Store) SaveLike(from, to string) error {
-	if s.likes[from] == nil {
-		s.likes[from] = make(map[string]bool)
+// LoadPair возвращает состояние пары по ключу
+func (s *Store) LoadPair(key domain.PairKey) (domain.Pair, error) {
+	if !key.Valid() {
+		return domain.Pair{}, fmt.Errorf("memory: %w: %+v", domain.ErrInvalidPairKey, key)
 	}
-	s.likes[from][to] = true
+	p, ok := s.pairs[key]
+	if !ok {
+		return domain.NewPair(key), nil
+	}
+	return p, nil
+}
+
+// SavePair сохраняет состояние пары, заменяя прежнее
+func (s *Store) SavePair(p domain.Pair) error {
+	if !p.Key.Valid() {
+		return fmt.Errorf("memory: %w: %+v", domain.ErrInvalidPairKey, p.Key)
+	}
+	s.pairs[p.Key] = p
 	return nil
+}
+
+// SaveLike сохраняет лайк from -> to в состоянии их пары
+func (s *Store) SaveLike(from, to string) error {
+	p, err := s.LoadPair(domain.NewPairKey(from, to))
+	if err != nil {
+		return err
+	}
+	return s.SavePair(p.WithLike(from))
 }
 
 // HasLiked сообщает, лайкал ли from пользователя to
 func (s *Store) HasLiked(from, to string) (bool, error) {
-	return s.likes[from][to], nil
+	p, err := s.LoadPair(domain.NewPairKey(from, to))
+	if err != nil {
+		return false, err
+	}
+	return p.HasLiked(from), nil
 }
 
 // LikedIDs возвращает ID всех, кого лайкнул userID
 func (s *Store) LikedIDs(userID string) ([]string, error) {
-	ids := make([]string, 0, len(s.likes[userID]))
-	for id := range s.likes[userID] {
-		ids = append(ids, id)
+	ids := []string{}
+	for key, p := range s.pairs {
+		if key.Low == userID && p.LowLiked {
+			ids = append(ids, key.High)
+		}
+		if key.High == userID && p.HighLiked {
+			ids = append(ids, key.Low)
+		}
 	}
 	return ids, nil
 }
