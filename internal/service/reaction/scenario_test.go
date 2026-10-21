@@ -35,11 +35,21 @@ func feedIDs(t *testing.T, store *memory.Store, userID string) []string {
 	if err != nil {
 		t.Fatalf("feed(%s): %v", userID, err)
 	}
-	ids := []string{}
+	ids := make([]string, 0, len(users))
 	for _, u := range users {
 		ids = append(ids, u.ID)
 	}
 	return ids
+}
+
+func checkFeedAfterFirstLike(t *testing.T, store *memory.Store) {
+	t.Helper()
+	if got := feedIDs(t, store, "u3"); slices.Contains(got, "u2") {
+		t.Fatalf("после лайка Борис не должен быть в ленте Веры: %v", got)
+	}
+	if got := feedIDs(t, store, "u2"); !slices.Contains(got, "u3") {
+		t.Fatalf("Борис ещё не ответил, Вера должна быть в его ленте: %v", got)
+	}
 }
 
 func TestScenario_LikeRepeatResponseRepeat(t *testing.T) {
@@ -75,12 +85,7 @@ func TestScenario_LikeRepeatResponseRepeat(t *testing.T) {
 		}
 
 		if i == 0 {
-			if got := feedIDs(t, store.Store, "u3"); slices.Contains(got, "u2") {
-				t.Fatalf("после лайка Борис не должен быть в ленте Веры: %v", got)
-			}
-			if got := feedIDs(t, store.Store, "u2"); !slices.Contains(got, "u3") {
-				t.Fatalf("Борис ещё не ответил, Вера должна быть в его ленте: %v", got)
-			}
+			checkFeedAfterFirstLike(t, store.Store)
 		}
 	}
 	if got := feedIDs(t, store.Store, "u2"); slices.Contains(got, "u3") {
@@ -96,7 +101,7 @@ func TestScenario_LikeRepeatResponseRepeat(t *testing.T) {
 func TestScenario_NotAllowedLeavesStateUnchanged(t *testing.T) {
 	store := &countingStore{Store: memory.NewDemoStore()}
 
-	_, err := reaction.NewService(store).Like("u3", "u5") // Дина неактивна
+	_, err := reaction.NewService(store).Like("u3", "u5")
 
 	if !errors.Is(err, reaction.ErrNotAllowed) {
 		t.Fatalf("ожидался ErrNotAllowed, got %v", err)
