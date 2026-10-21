@@ -149,7 +149,7 @@ func runReaction(store *memory.Store) error {
 
 	_, err := reactions.Like("u3", "u5")
 	if !errors.Is(err, reaction.ErrNotAllowed) {
-		return fmt.Errorf("ожидался отказ, got %v", err)
+		return fmt.Errorf("ожидался отказ, got %w", err)
 	}
 	fmt.Println("5) Вера лайкает Дину: отказ:", err)
 
