@@ -21,12 +21,21 @@ type countingStore struct {
 
 var errSave = errors.New("save failed")
 
-func (c *countingStore) SavePair(p domain.Pair) error {
+func (c *countingStore) UpdatePair(
+	key domain.PairKey,
+	otherID string,
+	update func(current domain.Pair, blocked bool) (domain.Pair, error),
+) (domain.Pair, error) {
 	if c.failSave {
-		return errSave
+		return domain.Pair{}, errSave
 	}
-	c.saves++
-	return c.Store.SavePair(p)
+	return c.Store.UpdatePair(key, otherID, func(current domain.Pair, blocked bool) (domain.Pair, error) {
+		next, err := update(current, blocked)
+		if err == nil && next != current {
+			c.saves++
+		}
+		return next, err
+	})
 }
 
 func feedIDs(t *testing.T, store *memory.Store, userID string) []string {
@@ -68,8 +77,8 @@ func TestScenario_LikeRepeatResponseRepeat(t *testing.T) {
 	}{
 		{"u3", "u2", reaction.Result{Outcome: interaction.OutcomePending, Changed: true, Likes: 1}, 1},
 		{"u3", "u2", reaction.Result{Outcome: interaction.OutcomePending, Changed: false, Likes: 1}, 1},
-		{"u2", "u3", reaction.Result{Outcome: interaction.OutcomeMatch, Changed: true, Likes: 2}, 2},
-		{"u2", "u3", reaction.Result{Outcome: interaction.OutcomeMatch, Changed: false, Likes: 2}, 2},
+		{"u2", "u3", reaction.Result{Outcome: interaction.OutcomeMatch, Changed: true, Likes: 2, Matched: true, MatchedNow: true}, 2},
+		{"u2", "u3", reaction.Result{Outcome: interaction.OutcomeMatch, Changed: false, Likes: 2, Matched: true}, 2},
 	}
 	for i, st := range steps {
 		got, err := svc.Like(st.actor, st.target)
@@ -134,5 +143,50 @@ func TestScenario_SaveFailureThenRetry(t *testing.T) {
 
 	if err != nil || !got.Changed || got.Likes != 1 {
 		t.Fatalf("повтор после устранения отказа: %+v, %v", got, err)
+	}
+}
+
+func TestScenario_ConcurrentLikesPreserveBothSides(t *testing.T) {
+	store := memory.NewDemoStore()
+	svc := reaction.NewService(store)
+	const calls = 20
+	start := make(chan struct{})
+	type response struct {
+		result reaction.Result
+		err    error
+	}
+	responses := make(chan response, calls)
+	for i := range calls {
+		actor, target := "u2", "u3"
+		if i%2 == 0 {
+			actor, target = target, actor
+		}
+		go func() {
+			<-start
+			result, err := svc.Like(actor, target)
+			responses <- response{result: result, err: err}
+		}()
+	}
+	close(start)
+
+	changed, matchedNow := 0, 0
+	for range calls {
+		response := <-responses
+		if response.err != nil {
+			t.Fatalf("concurrent Like: %v", response.err)
+		}
+		if response.result.Changed {
+			changed++
+		}
+		if response.result.MatchedNow {
+			matchedNow++
+		}
+	}
+	pair, err := store.LoadPair(domain.NewPairKey("u2", "u3"))
+	if err != nil {
+		t.Fatalf("LoadPair: %v", err)
+	}
+	if changed != 2 || matchedNow != 1 || pair.LikeCount() != 2 || !pair.IsMatch() {
+		t.Fatalf("changed=%d, matchedNow=%d, pair=%+v; want 2, 1 and match", changed, matchedNow, pair)
 	}
 }

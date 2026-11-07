@@ -14,15 +14,24 @@ var (
 	ErrPairMismatch = errors.New("pair does not match users")
 )
 
-// Decision — результат чистого перехода
+type NotAllowedError struct {
+	Reason eligibility.Reason
+}
+
+func (e *NotAllowedError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrNotAllowed, e.Reason)
+}
+
+func (e *NotAllowedError) Unwrap() error {
+	return ErrNotAllowed
+}
+
 type Decision struct {
 	Pair    domain.Pair
 	Outcome interaction.Outcome
 	Changed bool
 }
 
-// Transition решает, что происходит, когда actor лайкает target при текущем состоянии пары
-// blocked — есть ли блокировка между ними в любую сторону
 func Transition(current domain.Pair, actor, target domain.User, blocked bool) (Decision, error) {
 	if current.Key != domain.NewPairKey(actor.ID, target.ID) {
 		return Decision{}, ErrPairMismatch
@@ -30,7 +39,7 @@ func Transition(current domain.Pair, actor, target domain.User, blocked bool) (D
 
 	check := eligibility.Check(actor, target, blocked, false)
 	if !check.Allowed {
-		return Decision{}, fmt.Errorf("%w: %s", ErrNotAllowed, check.Reason)
+		return Decision{}, &NotAllowedError{Reason: check.Reason}
 	}
 
 	outcome := interaction.Decide(actor, target, current.HasLiked(target.ID))

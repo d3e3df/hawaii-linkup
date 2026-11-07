@@ -12,16 +12,19 @@ var ErrInvalidRequest = errors.New("invalid request")
 
 type Storage interface {
 	GetUser(id string) (domain.User, error)
-	IsBlocked(a, b string) (bool, error)
-	LoadPair(key domain.PairKey) (domain.Pair, error)
-	SavePair(p domain.Pair) error
+	UpdatePair(
+		key domain.PairKey,
+		otherID string,
+		update func(current domain.Pair, blocked bool) (domain.Pair, error),
+	) (domain.Pair, error)
 }
 
-// Result — результат команды Like
 type Result struct {
-	Outcome interaction.Outcome
-	Changed bool
-	Likes   int
+	Outcome    interaction.Outcome
+	Changed    bool
+	Likes      int
+	Matched    bool
+	MatchedNow bool
 }
 
 type Service struct {
@@ -32,7 +35,6 @@ func NewService(storage Storage) *Service {
 	return &Service{storage: storage}
 }
 
-// Like: actorID лайкает targetID.
 func (s *Service) Like(actorID, targetID string) (Result, error) {
 	if actorID == "" || targetID == "" {
 		return Result{}, fmt.Errorf("%w: пустой ID пользователя", ErrInvalidRequest)
@@ -46,29 +48,25 @@ func (s *Service) Like(actorID, targetID string) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("reaction: получение пользователя %s: %w", targetID, err)
 	}
-	blocked, err := s.storage.IsBlocked(actorID, targetID)
-	if err != nil {
-		return Result{}, fmt.Errorf("reaction: проверка блокировки: %w", err)
-	}
-	pair, err := s.storage.LoadPair(domain.NewPairKey(actorID, targetID))
-	if err != nil {
-		return Result{}, fmt.Errorf("reaction: загрузка пары: %w", err)
-	}
 
-	decision, err := Transition(pair, actor, target, blocked)
-	if err != nil {
-		return Result{}, err
-	}
-
-	if decision.Changed {
-		if err := s.storage.SavePair(decision.Pair); err != nil {
-			return Result{}, fmt.Errorf("reaction: сохранение пары: %w", err)
+	var decision Decision
+	key := domain.NewPairKey(actorID, targetID)
+	_, err = s.storage.UpdatePair(key, targetID, func(current domain.Pair, blocked bool) (domain.Pair, error) {
+		decision, err = Transition(current, actor, target, blocked)
+		if err != nil {
+			return domain.Pair{}, err
 		}
+		return decision.Pair, nil
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("reaction: обновление пары: %w", err)
 	}
 
 	return Result{
-		Outcome: decision.Outcome,
-		Changed: decision.Changed,
-		Likes:   decision.Pair.LikeCount(),
+		Outcome:    decision.Outcome,
+		Changed:    decision.Changed,
+		Likes:      decision.Pair.LikeCount(),
+		Matched:    decision.Pair.IsMatch(),
+		MatchedNow: decision.Changed && decision.Pair.IsMatch(),
 	}, nil
 }

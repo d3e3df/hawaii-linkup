@@ -54,6 +54,39 @@ func (f *fakeRepo) SaveLike(from, to string) error {
 	return nil
 }
 
+func (f *fakeRepo) UpdatePair(
+	key domain.PairKey,
+	_ string,
+	update func(current domain.Pair, blocked bool) (domain.Pair, error),
+) (domain.Pair, error) {
+	if f.hasErr != nil {
+		return domain.Pair{}, f.hasErr
+	}
+	current := domain.NewPair(key)
+	if f.likes[key.Low+"->"+key.High] {
+		current = current.WithLike(key.Low)
+	}
+	if f.likes[key.High+"->"+key.Low] {
+		current = current.WithLike(key.High)
+	}
+	next, err := update(current, false)
+	if err != nil || next == current {
+		return next, err
+	}
+	if f.saveErr != nil {
+		return domain.Pair{}, f.saveErr
+	}
+	if next.LowLiked != current.LowLiked {
+		f.likes[key.Low+"->"+key.High] = next.LowLiked
+		f.saved = append(f.saved, key.Low+"->"+key.High)
+	}
+	if next.HighLiked != current.HighLiked {
+		f.likes[key.High+"->"+key.Low] = next.HighLiked
+		f.saved = append(f.saved, key.High+"->"+key.Low)
+	}
+	return next, nil
+}
+
 var errStorage = errors.New("storage is down")
 
 func TestService_Like_Pending(t *testing.T) {
