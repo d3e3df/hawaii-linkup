@@ -9,25 +9,23 @@ import (
 
 var ErrInvalidRequest = errors.New("invalid request")
 
-// Repository - операции, которые нужны сервису от хранилища
 type Repository interface {
 	GetUser(id string) (domain.User, error)
-	HasLiked(from, to string) (bool, error)
-	SaveLike(from, to string) error
+	UpdatePair(
+		key domain.PairKey,
+		otherID string,
+		update func(current domain.Pair, blocked bool) (domain.Pair, error),
+	) (domain.Pair, error)
 }
 
-// Service выполняет лайк: читает данные, применяет Decide и сохраняет лайк
 type Service struct {
 	repo Repository
 }
 
-// NewService принимает зависимость извне
 func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// Like обрабатывает лайк fromID -> toID и возвращает результат
-// При OutcomeRejected лайк не сохраняется
 func (s *Service) Like(fromID, toID string) (Outcome, error) {
 	if fromID == "" || toID == "" {
 		return "", fmt.Errorf("%w: пустой ID пользователя", ErrInvalidRequest)
@@ -41,17 +39,17 @@ func (s *Service) Like(fromID, toID string) (Outcome, error) {
 	if err != nil {
 		return "", fmt.Errorf("interaction: получение пользователя %s: %w", toID, err)
 	}
-	reverseLike, err := s.repo.HasLiked(toID, fromID)
+
+	var outcome Outcome
+	key := domain.NewPairKey(fromID, toID)
+	_, err = s.repo.UpdatePair(key, toID, func(current domain.Pair, _ bool) (domain.Pair, error) {
+		outcome = Decide(from, to, current.HasLiked(toID))
+		if outcome == OutcomeRejected {
+			return current, nil
+		}
+		return current.WithLike(fromID), nil
+	})
 	if err != nil {
-		return "", fmt.Errorf("interaction: проверка встречного лайка: %w", err)
-	}
-
-	outcome := Decide(from, to, reverseLike)
-	if outcome == OutcomeRejected {
-		return outcome, nil
-	}
-
-	if err := s.repo.SaveLike(fromID, toID); err != nil {
 		return "", fmt.Errorf("interaction: сохранение лайка: %w", err)
 	}
 	return outcome, nil

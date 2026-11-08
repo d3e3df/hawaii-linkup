@@ -61,11 +61,39 @@ func (f *fakeStorage) LoadPair(key domain.PairKey) (domain.Pair, error) {
 
 func (f *fakeStorage) SavePair(p domain.Pair) error {
 	if f.saveErr != nil {
-		return f.saveErr // отказ до изменения памяти
+		return f.saveErr
 	}
 	f.saves++
 	f.pairs[p.Key] = p
 	return nil
+}
+
+func (f *fakeStorage) UpdatePair(
+	key domain.PairKey,
+	_ string,
+	update func(current domain.Pair, blocked bool) (domain.Pair, error),
+) (domain.Pair, error) {
+	if f.loadErr != nil {
+		return domain.Pair{}, f.loadErr
+	}
+	if f.blockErr != nil {
+		return domain.Pair{}, f.blockErr
+	}
+	current, err := f.LoadPair(key)
+	if err != nil {
+		return domain.Pair{}, err
+	}
+	next, err := update(current, f.blocked)
+	if err != nil {
+		return domain.Pair{}, err
+	}
+	if next == current {
+		return next, nil
+	}
+	if err := f.SavePair(next); err != nil {
+		return domain.Pair{}, err
+	}
+	return next, nil
 }
 
 var errStorage = errors.New("storage is down")
@@ -98,7 +126,7 @@ func TestLike_ResponseIsMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("неожиданная ошибка: %v", err)
 	}
-	want := Result{Outcome: interaction.OutcomeMatch, Changed: true, Likes: 2}
+	want := Result{Outcome: interaction.OutcomeMatch, Changed: true, Likes: 2, Matched: true, MatchedNow: true}
 	if got != want || fake.saves != 1 {
 		t.Fatalf("got %+v, saves=%d; want %+v, saves=1", got, fake.saves, want)
 	}
