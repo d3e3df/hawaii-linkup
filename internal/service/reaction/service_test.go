@@ -1,6 +1,7 @@
 package reaction
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -103,7 +104,7 @@ var abKey = domain.NewPairKey("a", "b")
 func TestLike_FirstLikeSaves(t *testing.T) {
 	fake := newFake()
 
-	got, err := NewService(fake).Like("a", "b")
+	got, err := newTestService(fake).Like(context.Background(), "a", "b")
 
 	if err != nil {
 		t.Fatalf("неожиданная ошибка: %v", err)
@@ -121,7 +122,7 @@ func TestLike_ResponseIsMatch(t *testing.T) {
 	fake := newFake()
 	fake.pairs[abKey] = domain.NewPair(abKey).WithLike("a")
 
-	got, err := NewService(fake).Like("b", "a")
+	got, err := newTestService(fake).Like(context.Background(), "b", "a")
 
 	if err != nil {
 		t.Fatalf("неожиданная ошибка: %v", err)
@@ -136,7 +137,7 @@ func TestLike_RepeatDoesNotSave(t *testing.T) {
 	fake := newFake()
 	fake.pairs[abKey] = domain.NewPair(abKey).WithLike("a")
 
-	got, err := NewService(fake).Like("a", "b")
+	got, err := newTestService(fake).Like(context.Background(), "a", "b")
 
 	if err != nil {
 		t.Fatalf("повтор не должен быть ошибкой: %v", err)
@@ -165,7 +166,7 @@ func TestLike_NotAllowedDoesNotSave(t *testing.T) {
 			fake := newFake()
 			tt.edit(fake)
 
-			got, err := NewService(fake).Like("a", tt.target)
+			got, err := newTestService(fake).Like(context.Background(), "a", tt.target)
 
 			if !errors.Is(err, ErrNotAllowed) {
 				t.Fatalf("ожидался ErrNotAllowed, got %v", err)
@@ -180,7 +181,7 @@ func TestLike_NotAllowedDoesNotSave(t *testing.T) {
 func TestLike_UserNotFound(t *testing.T) {
 	fake := newFake()
 
-	_, err := NewService(fake).Like("a", "nobody")
+	_, err := newTestService(fake).Like(context.Background(), "a", "nobody")
 
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("ожидался domain.ErrNotFound, got %v", err)
@@ -191,7 +192,7 @@ func TestLike_UserNotFound(t *testing.T) {
 }
 
 func TestLike_EmptyID(t *testing.T) {
-	_, err := NewService(newFake()).Like("", "b")
+	_, err := newTestService(newFake()).Like(context.Background(), "", "b")
 
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("ожидался ErrInvalidRequest, got %v", err)
@@ -213,7 +214,7 @@ func TestLike_ReadErrorsStopBeforeSave(t *testing.T) {
 			fake := newFake()
 			tt.edit(fake)
 
-			got, err := NewService(fake).Like("a", "b")
+			got, err := newTestService(fake).Like(context.Background(), "a", "b")
 
 			if !errors.Is(err, errStorage) {
 				t.Fatalf("причина ошибки потеряна: %v", err)
@@ -229,7 +230,7 @@ func TestLike_SaveErrorIsNotSuccess(t *testing.T) {
 	fake := newFake()
 	fake.saveErr = errStorage
 
-	got, err := NewService(fake).Like("a", "b")
+	got, err := newTestService(fake).Like(context.Background(), "a", "b")
 
 	if !errors.Is(err, errStorage) {
 		t.Fatalf("причина ошибки потеряна: %v", err)
