@@ -1,0 +1,199 @@
+@baseUrl = http://127.0.0.1:8080
+@profileUrl = http://127.0.0.1:8081
+
+# Перед началом запустить в отдельных терминалах:
+#   go run ./cmd/profileapi
+#   go run ./cmd/linkup
+# В VSCode установить REST Client (humao.rest-client), открыть этот файл
+# и нажимать Send Request над запросами. Разделы 1–4 выполнять по порядку.
+# Для повторения с известного состояния перезапустить оба процесса.
+
+### 0.1 Health LinkUp
+# Ожидание: 200 OK; {"status":"ok"}; непустой X-Request-ID.
+GET {{baseUrl}}/healthz
+
+### 0.2 Health Profile API
+# Ожидание: 200 OK; {"status":"ok"}.
+GET {{profileUrl}}/healthz
+
+### 1.1 Discovery: фильтр travel, первая страница
+# Ожидание: 200; items[].id = [u1, u6]; limit=2; offset=0.
+GET {{baseUrl}}/v1/me/discovery?interest=travel&limit=2&offset=0
+X-Demo-User: u3
+
+### 1.2 Discovery: вторая страница
+# Ожидание: 200; items[].id = [u7, u8]; limit=2; offset=2.
+GET {{baseUrl}}/v1/me/discovery?interest=travel&limit=2&offset=2
+X-Demo-User: u3
+
+### 1.3 Исходное состояние пары u3/u1
+# Ожидание: 200; target_id=u1; liked_by_me=false; liked_me=false; likes=0; matched=false.
+GET {{baseUrl}}/v1/me/pairs/u1
+X-Demo-User: u3
+
+### 2.1 Первый Like u3 -> u1
+# Ожидание: 200; outcome=pending; changed=true; likes=1; matched=false; matched_now=false.
+PUT {{baseUrl}}/v1/me/likes/u1
+X-Demo-User: u3
+
+### 2.2 Повторный Like: согласованный no-op
+# Ожидание: 200; outcome=pending; changed=false; likes=1; matched=false; matched_now=false.
+PUT {{baseUrl}}/v1/me/likes/u1
+X-Demo-User: u3
+
+### 2.3 Чтение результата после команды
+# Ожидание: 200; liked_by_me=true; liked_me=false; likes=1; matched=false.
+GET {{baseUrl}}/v1/me/pairs/u1
+X-Demo-User: u3
+
+### 2.4 Встречный Like u1 -> u3 создаёт match
+# Ожидание: 200; outcome=match; changed=true; likes=2; matched=true; matched_now=true.
+PUT {{baseUrl}}/v1/me/likes/u3
+X-Demo-User: u1
+
+### 2.5 Повтор после match
+# Ожидание: 200; outcome=match; changed=false; likes=2; matched=true; matched_now=false.
+PUT {{baseUrl}}/v1/me/likes/u3
+X-Demo-User: u1
+
+### 3.1 Выдача после команды
+# Ожидание: 200; items[].id = [u6, u7]: u1 исключена после Like, пагинация сохранена.
+GET {{baseUrl}}/v1/me/discovery?interest=travel&limit=2&offset=0
+X-Demo-User: u3
+
+### 3.2 Пустая страница: нет совпадений по фильтру
+# Ожидание: 200; items=[]; limit=2; offset=0.
+GET {{baseUrl}}/v1/me/discovery?interest=unknown&limit=2&offset=0
+X-Demo-User: u3
+
+### 3.3 Пустая страница: offset за концом выдачи
+# Ожидание: 200; items=[]; limit=2; offset=100.
+GET {{baseUrl}}/v1/me/discovery?interest=travel&limit=2&offset=100
+X-Demo-User: u3
+
+### 3.4 Неверный query: limit=0
+# Ожидание: 400; code=invalid_query; бизнес-операция не выполняется.
+GET {{baseUrl}}/v1/me/discovery?limit=0
+X-Demo-User: u3
+
+### 3.5 Неверный query: повторный limit
+# Ожидание: 400; code=invalid_query.
+GET {{baseUrl}}/v1/me/discovery?limit=1&limit=2
+X-Demo-User: u3
+
+### 3.6 Предметный запрет: самолайк
+# Ожидание: 409; code=self_like; состояние пары не меняется.
+PUT {{baseUrl}}/v1/me/likes/u3
+X-Demo-User: u3
+
+### 3.7 Непустое body запрещено контрактом
+# Ожидание: 400; code=body_not_allowed; Like не выполняется.
+PUT {{baseUrl}}/v1/me/likes/u2
+X-Demo-User: u3
+Content-Type: application/json
+
+{}
+
+### 4.1 Profile API: включить missing
+# Ожидание: 200; mode=missing.
+PUT {{profileUrl}}/_admin/mode/missing
+
+### 4.2 missing: свежая команда u3 -> u2
+# Ожидание: 404; code=target_not_found; записи нет.
+PUT {{baseUrl}}/v1/me/likes/u2
+X-Demo-User: u3
+
+### 4.3 missing: состояние не изменилось
+# Ожидание: 200; likes=0; liked_by_me=false; matched=false.
+GET {{baseUrl}}/v1/me/pairs/u2
+X-Demo-User: u3
+
+### 4.4 Profile API: включить error
+# Ожидание: 200; mode=error.
+PUT {{profileUrl}}/_admin/mode/error
+
+### 4.5 error: свежая команда u3 -> u4
+# Ожидание: 502; code=profile_unavailable; записи нет.
+PUT {{baseUrl}}/v1/me/likes/u4
+X-Demo-User: u3
+
+### 4.6 error: состояние не изменилось
+# Ожидание: 200; likes=0; liked_by_me=false; matched=false.
+GET {{baseUrl}}/v1/me/pairs/u4
+X-Demo-User: u3
+
+### 4.7 Profile API: включить slow
+# Ожидание: 200; mode=slow.
+PUT {{profileUrl}}/_admin/mode/slow
+
+### 4.8 slow: свежая команда u3 -> u6
+# Ожидание примерно через 300 ms: 504; code=profile_timeout; записи нет.
+PUT {{baseUrl}}/v1/me/likes/u6
+X-Demo-User: u3
+
+### 4.9 slow: состояние не изменилось
+# Ожидание: 200; likes=0; liked_by_me=false; matched=false.
+GET {{baseUrl}}/v1/me/pairs/u6
+X-Demo-User: u3
+
+### 4.10 Profile API: включить large
+# Ожидание: 200; mode=large.
+PUT {{profileUrl}}/_admin/mode/large
+
+### 4.11 large: свежая команда u3 -> u7
+# Ожидание: 502; code=profile_response_too_large; записи нет.
+PUT {{baseUrl}}/v1/me/likes/u7
+X-Demo-User: u3
+
+### 4.12 large: состояние не изменилось
+# Ожидание: 200; likes=0; liked_by_me=false; matched=false.
+GET {{baseUrl}}/v1/me/pairs/u7
+X-Demo-User: u3
+
+### 4.13 Profile API: вернуть ok
+# Ожидание: 200; mode=ok.
+PUT {{profileUrl}}/_admin/mode/ok
+
+### 4.14 ok: успешная свежая команда u3 -> u8
+# Ожидание: 200; outcome=pending; changed=true; likes=1; matched=false.
+PUT {{baseUrl}}/v1/me/likes/u8
+X-Demo-User: u3
+
+### 5.1 CONCURRENT: u2 -> u4
+# Выполнить 5.1 и 5.2 одновременно; команды для реальной параллельной отправки — в README.
+# Ожидание каждого: 200. Вместе: changed=true ровно у двух, matched_now=true ровно у одного.
+# Первый по порядку выполнения: likes=1, outcome=pending; второй: likes=2, outcome=match.
+PUT {{baseUrl}}/v1/me/likes/u4
+X-Demo-User: u2
+
+### 5.2 CONCURRENT: u4 -> u2
+# Ожидание: те же совокупные инварианты, что у 5.1; порядок ответов не фиксирован.
+PUT {{baseUrl}}/v1/me/likes/u2
+X-Demo-User: u4
+
+### 5.3 Состояние после конкурентных Like
+# Ожидание: 200; liked_by_me=true; liked_me=true; likes=2; matched=true.
+GET {{baseUrl}}/v1/me/pairs/u4
+X-Demo-User: u2
+
+### 5.4 Повтор после конкурентного match
+# Ожидание: 200; changed=false; likes=2; matched=true; matched_now=false.
+PUT {{baseUrl}}/v1/me/likes/u4
+X-Demo-User: u2
+
+### 6.1 Подготовка shutdown: включить slow
+# Перед этим разделом перезапустить LinkUp с более удобным ручным бюджетом:
+#   LINKUP_COMMAND_TIMEOUT=2s LINKUP_WRITE_TIMEOUT=4s go run ./cmd/linkup
+# Ожидание: 200; mode=slow.
+PUT {{profileUrl}}/_admin/mode/slow
+
+### 6.2 Shutdown во время активного запроса
+# Нажать Send Request, затем до истечения 2 секунд отправить SIGTERM приложению
+# (Ctrl+C в терминале LinkUp). Не останавливать Profile API.
+# Ожидание: активный запрос завершается 504 с code=profile_timeout;
+# LinkUp ждёт завершение запроса и штатно останавливается без принудительного Close.
+PUT {{baseUrl}}/v1/me/likes/u2
+X-Demo-User: u3
+
+# После проверки остановить Profile API через Ctrl+C.
+# Следующий запуск разделов 1–4 начинать заново с обоих процессов и default-конфигурацией.
