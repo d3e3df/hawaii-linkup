@@ -1,177 +1,27 @@
 package main
 
 import (
-	"errors"
-	"fmt"
-	"log"
-	"strings"
+	"context"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"hawaii-linkup/internal/repository/memory"
-	"hawaii-linkup/internal/service/discovery"
-	"hawaii-linkup/internal/service/eligibility"
-	"hawaii-linkup/internal/service/feed"
-	"hawaii-linkup/internal/service/interaction"
-	"hawaii-linkup/internal/service/reaction"
+	"hawaii-linkup/internal/app"
+	"hawaii-linkup/internal/config"
 )
 
 func main() {
-	if err := runDiscovery(memory.NewDemoStore()); err != nil {
-		log.Fatalf("discovery: %v", err)
-	}
-	if err := runFeed(memory.NewDemoStore()); err != nil {
-		log.Fatalf("feed: %v", err)
-	}
-	if err := runEligibility(memory.NewDemoStore()); err != nil {
-		log.Fatalf("eligibility: %v", err)
-	}
-	if err := runInteraction(memory.NewDemoStore()); err != nil {
-		log.Fatalf("interaction: %v", err)
-	}
-	if err := runReaction(memory.NewDemoStore()); err != nil {
-		log.Fatalf("reaction: %v", err)
-	}
-}
-
-func runDiscovery(store *memory.Store) error {
-	fmt.Println("=== A. Discovery ===")
-	svc := discovery.NewService(store)
-
-	c := discovery.Criteria{City: "Москва", MinAge: 20, MaxAge: 30, Interests: []string{"music"}}
-	found, err := svc.Find("u1", c)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	settings, err := config.Load()
 	if err != nil {
-		return err
+		logger.Error("invalid configuration", "error", err)
+		os.Exit(1)
 	}
-
-	fmt.Println("Кандидаты для Анны (Москва, 20–30, music):")
-	if len(found) == 0 {
-		fmt.Println("  подходящих кандидатов нет")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := app.Run(ctx, settings, logger); err != nil {
+		logger.Error("application stopped with error", "error", err)
+		os.Exit(1)
 	}
-	for _, u := range found {
-		fmt.Printf("  %s, %d, %s\n", u.Name, u.Age, u.City)
-	}
-	fmt.Println()
-	return nil
-}
-
-func runFeed(store *memory.Store) error {
-	fmt.Println("=== B. Feed ===")
-	svc := feed.NewService(store)
-
-	candidates, err := svc.Feed("u1", 10)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Лента Анны (без заблокированных и уже лайкнутых):")
-	if len(candidates) == 0 {
-		fmt.Println("  кандидатов не осталось")
-	}
-	for _, u := range candidates {
-		fmt.Printf("  %s, %d, %s\n", u.Name, u.Age, u.City)
-	}
-	fmt.Println()
-	return nil
-}
-
-// runEligibility - контракт C: проверка допустимости кандидата
-func runEligibility(store *memory.Store) error {
-	fmt.Println("=== C. Eligibility ===")
-	svc := eligibility.NewService(store)
-
-	pairs := [][2]string{
-		{"u1", "u2"}, // можно
-		{"u1", "u4"}, // блокировка
-		{"u1", "u5"}, // неактивный профиль
-		{"u1", "u6"}, // уже лайкнут
-		{"u1", "u1"}, // сам себя
-	}
-	for _, p := range pairs {
-		d, err := svc.CanLike(p[0], p[1])
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%s -> %s: allowed=%v, reason=%s\n", p[0], p[1], d.Allowed, d.Reason)
-	}
-
-	_, err := svc.CanLike("u1", "nobody")
-	fmt.Println("несуществующий пользователь:", err)
-	fmt.Println()
-	return nil
-}
-
-// runInteraction - контракт D: формирование результата взаимодействия
-func runInteraction(store *memory.Store) error {
-	fmt.Println("=== D. Interaction ===")
-	svc := interaction.NewService(store)
-
-	pairs := [][2]string{
-		{"u1", "u2"}, // match
-		{"u1", "u3"}, // pending
-		{"u1", "u5"}, // rejected
-	}
-	for _, p := range pairs {
-		outcome, err := svc.Like(p[0], p[1])
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%s лайкает %s: %s\n", p[0], p[1], outcome)
-	}
-	fmt.Println()
-	return nil
-}
-
-// runReaction - ЛР2: лайк, повтор, ответ, повтор и чтение лент до и после
-func runReaction(store *memory.Store) error {
-	fmt.Println("=== ЛР2. Реакция и взаимность ===")
-	reactions := reaction.NewService(store)
-	feeds := feed.NewService(store)
-
-	if err := printFeeds(feeds, "до"); err != nil {
-		return err
-	}
-
-	steps := []struct {
-		title         string
-		actor, target string
-	}{
-		{"1) Вера лайкает Бориса", "u3", "u2"},
-		{"2) Вера лайкает Бориса (повтор)", "u3", "u2"},
-		{"3) Борис лайкает Веру (ответ)", "u2", "u3"},
-		{"4) Борис лайкает Веру (повтор)", "u2", "u3"},
-	}
-	for _, st := range steps {
-		res, err := reactions.Like(st.actor, st.target)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%s: %s, изменено=%v, лайков в паре=%d\n", st.title, res.Outcome, res.Changed, res.Likes)
-	}
-
-	_, err := reactions.Like("u3", "u5")
-	if !errors.Is(err, reaction.ErrNotAllowed) {
-		return fmt.Errorf("ожидался отказ, got %w", err)
-	}
-	fmt.Println("5) Вера лайкает Дину: отказ:", err)
-
-	if err := printFeeds(feeds, "после"); err != nil {
-		return err
-	}
-	fmt.Println()
-	return nil
-}
-
-// printFeeds печатает ленты Веры и Бориса
-func printFeeds(feeds *feed.Service, when string) error {
-	for _, p := range []struct{ id, name string }{{"u3", "Веры"}, {"u2", "Бориса"}} {
-		users, err := feeds.Feed(p.id, 10)
-		if err != nil {
-			return err
-		}
-		names := []string{}
-		for _, u := range users {
-			names = append(names, u.Name)
-		}
-		fmt.Printf("Лента %s %s: %s\n", p.name, when, strings.Join(names, ", "))
-	}
-	return nil
 }

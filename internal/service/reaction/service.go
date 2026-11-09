@@ -1,6 +1,7 @@
 package reaction
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -19,6 +20,10 @@ type Storage interface {
 	) (domain.Pair, error)
 }
 
+type ProfileProvider interface {
+	Get(ctx context.Context, id string) (domain.User, error)
+}
+
 type Result struct {
 	Outcome    interaction.Outcome
 	Changed    bool
@@ -28,25 +33,29 @@ type Result struct {
 }
 
 type Service struct {
-	storage Storage
+	storage  Storage
+	profiles ProfileProvider
 }
 
-func NewService(storage Storage) *Service {
-	return &Service{storage: storage}
+func NewService(storage Storage, profiles ProfileProvider) *Service {
+	return &Service{storage: storage, profiles: profiles}
 }
 
-func (s *Service) Like(actorID, targetID string) (Result, error) {
+func (s *Service) Like(ctx context.Context, actorID, targetID string) (Result, error) {
 	if actorID == "" || targetID == "" {
 		return Result{}, fmt.Errorf("%w: пустой ID пользователя", ErrInvalidRequest)
+	}
+	if s.profiles == nil {
+		return Result{}, errors.New("reaction: profile provider is nil")
 	}
 
 	actor, err := s.storage.GetUser(actorID)
 	if err != nil {
 		return Result{}, fmt.Errorf("reaction: получение пользователя %s: %w", actorID, err)
 	}
-	target, err := s.storage.GetUser(targetID)
+	target, err := s.profiles.Get(ctx, targetID)
 	if err != nil {
-		return Result{}, fmt.Errorf("reaction: получение пользователя %s: %w", targetID, err)
+		return Result{}, fmt.Errorf("reaction: получение профиля %s: %w", targetID, err)
 	}
 
 	var decision Decision

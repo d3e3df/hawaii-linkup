@@ -1,6 +1,7 @@
 package reaction_test
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"testing"
@@ -17,6 +18,19 @@ type countingStore struct {
 	*memory.Store
 	saves    int
 	failSave bool
+}
+
+type localProfiles struct {
+	store interface {
+		GetUser(id string) (domain.User, error)
+	}
+}
+
+func (p localProfiles) Get(ctx context.Context, id string) (domain.User, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.User{}, err
+	}
+	return p.store.GetUser(id)
 }
 
 var errSave = errors.New("save failed")
@@ -63,7 +77,7 @@ func checkFeedAfterFirstLike(t *testing.T, store *memory.Store) {
 
 func TestScenario_LikeRepeatResponseRepeat(t *testing.T) {
 	store := &countingStore{Store: memory.NewDemoStore()}
-	svc := reaction.NewService(store)
+	svc := reaction.NewService(store, localProfiles{store})
 	key := domain.NewPairKey("u3", "u2")
 
 	if got := feedIDs(t, store.Store, "u3"); !slices.Contains(got, "u2") {
@@ -81,7 +95,7 @@ func TestScenario_LikeRepeatResponseRepeat(t *testing.T) {
 		{"u2", "u3", reaction.Result{Outcome: interaction.OutcomeMatch, Changed: false, Likes: 2, Matched: true}, 2},
 	}
 	for i, st := range steps {
-		got, err := svc.Like(st.actor, st.target)
+		got, err := svc.Like(context.Background(), st.actor, st.target)
 		if err != nil {
 			t.Fatalf("шаг %d: %v", i+1, err)
 		}
@@ -110,7 +124,7 @@ func TestScenario_LikeRepeatResponseRepeat(t *testing.T) {
 func TestScenario_NotAllowedLeavesStateUnchanged(t *testing.T) {
 	store := &countingStore{Store: memory.NewDemoStore()}
 
-	_, err := reaction.NewService(store).Like("u3", "u5")
+	_, err := reaction.NewService(store, localProfiles{store}).Like(context.Background(), "u3", "u5")
 
 	if !errors.Is(err, reaction.ErrNotAllowed) {
 		t.Fatalf("ожидался ErrNotAllowed, got %v", err)
@@ -123,10 +137,10 @@ func TestScenario_NotAllowedLeavesStateUnchanged(t *testing.T) {
 
 func TestScenario_SaveFailureThenRetry(t *testing.T) {
 	store := &countingStore{Store: memory.NewDemoStore(), failSave: true}
-	svc := reaction.NewService(store)
+	svc := reaction.NewService(store, localProfiles{store})
 	key := domain.NewPairKey("u3", "u2")
 
-	got, err := svc.Like("u3", "u2")
+	got, err := svc.Like(context.Background(), "u3", "u2")
 
 	if !errors.Is(err, errSave) || got != (reaction.Result{}) {
 		t.Fatalf("got %+v, %v; want нулевой результат и errSave", got, err)
@@ -139,7 +153,7 @@ func TestScenario_SaveFailureThenRetry(t *testing.T) {
 	}
 
 	store.failSave = false
-	got, err = svc.Like("u3", "u2")
+	got, err = svc.Like(context.Background(), "u3", "u2")
 
 	if err != nil || !got.Changed || got.Likes != 1 {
 		t.Fatalf("повтор после устранения отказа: %+v, %v", got, err)
@@ -148,7 +162,7 @@ func TestScenario_SaveFailureThenRetry(t *testing.T) {
 
 func TestScenario_ConcurrentLikesPreserveBothSides(t *testing.T) {
 	store := memory.NewDemoStore()
-	svc := reaction.NewService(store)
+	svc := reaction.NewService(store, localProfiles{store})
 	const calls = 20
 	start := make(chan struct{})
 	type response struct {
@@ -163,7 +177,7 @@ func TestScenario_ConcurrentLikesPreserveBothSides(t *testing.T) {
 		}
 		go func() {
 			<-start
-			result, err := svc.Like(actor, target)
+			result, err := svc.Like(context.Background(), actor, target)
 			responses <- response{result: result, err: err}
 		}()
 	}
