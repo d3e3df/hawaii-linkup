@@ -10,6 +10,8 @@ func NewDemoStore() *Store {
 	s.AddUser(domain.User{ID: "u4", Name: "Глеб", Age: 22, City: "Москва", Interests: []string{"music"}, Active: true})
 	s.AddUser(domain.User{ID: "u5", Name: "Дина", Age: 27, City: "Москва", Interests: []string{"music"}, Active: false})
 	s.AddUser(domain.User{ID: "u6", Name: "Егор", Age: 35, City: "Москва", Interests: []string{"travel"}, Active: true})
+	s.AddUser(domain.User{ID: "u7", Name: "Игорь", Age: 29, City: "Москва", Interests: []string{"travel", "go"}, Active: true})
+	s.AddUser(domain.User{ID: "u8", Name: "Ольга", Age: 26, City: "Казань", Interests: []string{"travel", "books"}, Active: true})
 
 	s.Block("u1", "u4")
 	for _, like := range [][2]string{{"u1", "u6"}, {"u2", "u1"}} {

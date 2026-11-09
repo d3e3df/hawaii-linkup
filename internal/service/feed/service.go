@@ -9,8 +9,13 @@ import (
 
 var ErrInvalidRequest = errors.New("invalid request")
 
-// Mаксимальный размер ленты за один запрос
 const MaxLimit = 50
+
+type Query struct {
+	Interest string
+	Limit    int
+	Offset   int
+}
 
 type UserStorage interface {
 	ListUsers() ([]domain.User, error)
@@ -26,13 +31,19 @@ func NewService(storage UserStorage) *Service {
 	return &Service{storage: storage}
 }
 
-// Feed возвращает до limit кандидатов для requesterID
 func (s *Service) Feed(requesterID string, limit int) ([]domain.User, error) {
+	return s.Page(requesterID, Query{Limit: limit})
+}
+
+func (s *Service) Page(requesterID string, query Query) ([]domain.User, error) {
 	if requesterID == "" {
 		return nil, fmt.Errorf("%w: пустой requesterID", ErrInvalidRequest)
 	}
-	if limit < 1 || limit > MaxLimit {
+	if query.Limit < 1 || query.Limit > MaxLimit {
 		return nil, fmt.Errorf("%w: limit должен быть от 1 до %d", ErrInvalidRequest, MaxLimit)
+	}
+	if query.Offset < 0 {
+		return nil, fmt.Errorf("%w: offset должен быть неотрицательным", ErrInvalidRequest)
 	}
 
 	blocked, err := s.storage.BlockedIDs(requesterID)
@@ -52,5 +63,5 @@ func (s *Service) Feed(requesterID string, limit int) ([]domain.User, error) {
 	excluded = append(excluded, blocked...)
 	excluded = append(excluded, liked...)
 
-	return BuildFeed(users, requesterID, excluded, limit), nil
+	return BuildPage(users, requesterID, excluded, query), nil
 }
