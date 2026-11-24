@@ -64,8 +64,25 @@ func (s *Store) ListUsersContext(ctx context.Context) ([]domain.User, error) {
 	return users, nil
 }
 
-func (s *Store) BlockedIDsContext(context.Context, string) ([]string, error) {
-	return []string{}, nil
+func (s *Store) BlockedIDsContext(ctx context.Context, userID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT blocked_id FROM blocks WHERE blocker_id = $1
+		UNION SELECT blocker_id FROM blocks WHERE blocked_id = $1 ORDER BY 1`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list blocks: %w", databaseError(err))
+	}
+	defer rows.Close()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("postgres: scan block: %w", databaseError(err))
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: read blocks: %w", databaseError(err))
+	}
+	return ids, nil
 }
 
 func (s *Store) LikedIDsContext(ctx context.Context, userID string) ([]string, error) {
@@ -109,6 +126,20 @@ func loadPair(ctx context.Context, querier rowQuerier, key domain.PairKey) (doma
 	).Scan(&pair.HighLiked); err != nil {
 		return domain.Pair{}, fmt.Errorf("postgres: load high reaction: %w", databaseError(err))
 	}
+	var matchActive bool
+	err := querier.QueryRow(ctx,
+		"SELECT active FROM matches WHERE low_id = $1 AND high_id = $2",
+		key.Low, key.High,
+	).Scan(&matchActive)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return domain.Pair{}, fmt.Errorf("postgres: load match: %w", databaseError(err))
+	}
+	if err == nil {
+		pair.MatchState = domain.MatchStateInactive
+		if matchActive {
+			pair.MatchState = domain.MatchStateActive
+		}
+	}
 	return pair, nil
 }
 
@@ -143,11 +174,16 @@ func (s *Store) UpdatePairProtected(
 	if err != nil {
 		return domain.Pair{}, err
 	}
-	next, err := update(current, actor, target, false)
+	blocked, err := pairBlocked(ctx, tx, key)
 	if err != nil {
 		return domain.Pair{}, err
 	}
-	if err := applyPairTransition(ctx, tx, key, actorID, targetID, current, next); err != nil {
+	next, err := update(current, actor, target, blocked)
+	if err != nil {
+		return domain.Pair{}, err
+	}
+	next, err = applyPairTransition(ctx, tx, key, actorID, targetID, current, next)
+	if err != nil {
 		return domain.Pair{}, err
 	}
 	if err := commit(ctx, tx); err != nil {
@@ -182,27 +218,29 @@ func (s *Store) lockPair(ctx context.Context, tx pgx.Tx, key domain.PairKey) err
 	return nil
 }
 
-func applyPairTransition(ctx context.Context, tx pgx.Tx, key domain.PairKey, actorID, targetID string, current, next domain.Pair) error {
+func applyPairTransition(ctx context.Context, tx pgx.Tx, key domain.PairKey, actorID, targetID string, current, next domain.Pair) (domain.Pair, error) {
 	if next.Key != key || !likesPreserved(current, next) {
-		return fmt.Errorf("postgres: %w: invalid pair transition", domainerrors.ErrInvalidPairKey)
+		return domain.Pair{}, fmt.Errorf("postgres: %w: invalid pair transition", domainerrors.ErrInvalidPairKey)
 	}
 	if !current.HasLiked(actorID) && next.HasLiked(actorID) {
 		if _, err := tx.Exec(ctx,
 			"INSERT INTO reactions (actor_id, target_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
 			actorID, targetID,
 		); err != nil {
-			return fmt.Errorf("postgres: insert reaction: %w", databaseError(err))
+			return domain.Pair{}, fmt.Errorf("postgres: insert reaction: %w", databaseError(err))
 		}
 	}
-	if !current.IsMatch() && next.IsMatch() {
+	if next.IsMatch() && !current.HasActiveMatch() {
 		if _, err := tx.Exec(ctx,
-			"INSERT INTO matches (low_id, high_id, active) VALUES ($1, $2, true) ON CONFLICT DO NOTHING",
+			`INSERT INTO matches (low_id, high_id, active) VALUES ($1, $2, true)
+			ON CONFLICT (low_id, high_id) DO UPDATE SET active = true WHERE matches.active = false`,
 			key.Low, key.High,
 		); err != nil {
-			return fmt.Errorf("postgres: create match: %w", databaseError(err))
+			return domain.Pair{}, fmt.Errorf("postgres: create match: %w", databaseError(err))
 		}
+		next.MatchState = domain.MatchStateActive
 	}
-	return nil
+	return next, nil
 }
 
 func loadUsers(ctx context.Context, tx pgx.Tx, actorID, targetID string) (domain.User, domain.User, error) {

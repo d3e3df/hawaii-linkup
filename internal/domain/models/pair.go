@@ -16,10 +16,19 @@ func (k PairKey) Valid() bool {
 	return k.Low != "" && k.High != "" && k.Low <= k.High
 }
 
+type MatchState uint8
+
+const (
+	MatchStateDerived MatchState = iota
+	MatchStateActive
+	MatchStateInactive
+)
+
 type Pair struct {
-	Key       PairKey
-	LowLiked  bool
-	HighLiked bool
+	Key        PairKey
+	LowLiked   bool
+	HighLiked  bool
+	MatchState MatchState
 }
 
 func NewPair(key PairKey) Pair {
@@ -49,6 +58,17 @@ func (p Pair) WithLike(userID string) Pair {
 
 func (p Pair) IsMatch() bool {
 	return p.LowLiked && p.HighLiked
+}
+
+func (p Pair) HasActiveMatch() bool {
+	switch p.MatchState {
+	case MatchStateActive:
+		return true
+	case MatchStateInactive:
+		return false
+	default:
+		return p.IsMatch()
+	}
 }
 
 func (p Pair) LikeCount() int {

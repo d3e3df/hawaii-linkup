@@ -61,6 +61,9 @@ func TestInitialSchemaConstraints(t *testing.T) {
 		{"unique reaction", "INSERT INTO reactions SELECT * FROM reactions WHERE actor_id = 'u1' AND target_id = 'u6'", "23505", "reactions_pkey"},
 		{"self reaction", "INSERT INTO reactions VALUES ('u1', 'u1')", "23514", "reactions_distinct_users"},
 		{"match foreign key", "INSERT INTO matches VALUES ('u3', 'u4', true)", "23503", "matches_low_id_high_id_fkey"},
+		{"unique block", "INSERT INTO blocks SELECT * FROM blocks WHERE blocker_id = 'u1' AND blocked_id = 'u4'", "23505", "blocks_pkey"},
+		{"self block", "INSERT INTO blocks VALUES ('u1', 'u1')", "23514", "blocks_distinct_users"},
+		{"block foreign key", "INSERT INTO blocks VALUES ('u1', 'u99')", "23503", "blocks_blocked_id_fkey"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
