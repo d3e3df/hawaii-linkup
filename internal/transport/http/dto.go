@@ -29,6 +29,13 @@ type likeResponse struct {
 	MatchedNow bool   `json:"matched_now"`
 }
 
+type withdrawResponse struct {
+	Changed          bool `json:"changed"`
+	Likes            int  `json:"likes"`
+	Matched          bool `json:"matched"`
+	MatchDeactivated bool `json:"match_deactivated"`
+}
+
 type blockResponse struct {
 	Changed          bool `json:"changed"`
 	Blocked          bool `json:"blocked"`

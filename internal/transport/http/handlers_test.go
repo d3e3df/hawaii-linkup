@@ -216,6 +216,41 @@ func TestProfileRejectsInvalidJSONAndMedia(t *testing.T) {
 	}
 }
 
+func TestWithdrawDeletesOwnReactionAndAllowsNewLike(t *testing.T) {
+	api := newTestAPI(t)
+	for _, like := range []struct {
+		actor  string
+		target string
+	}{{"u2", "u4"}, {"u4", "u2"}} {
+		resp := request(t, api.handler, http.MethodPut, "/v1/me/likes/"+like.target, like.actor, "")
+		if resp.Code != http.StatusOK {
+			t.Fatalf("like: status=%d body=%s", resp.Code, resp.Body.String())
+		}
+	}
+	first := request(t, api.handler, http.MethodDelete, "/v1/me/likes/u4", "u2", "")
+	assertWithdrawResponse(t, first, withdrawResponse{Changed: true, Likes: 1, MatchDeactivated: true})
+	pairResp := request(t, api.handler, http.MethodGet, "/v1/me/pairs/u4", "u2", "")
+	pair := decodeResponse[pairResponse](t, pairResp)
+	if pair.LikedByMe || !pair.LikedMe || pair.Likes != 1 || pair.Matched {
+		t.Fatalf("pair=%+v", pair)
+	}
+	repeat := request(t, api.handler, http.MethodDelete, "/v1/me/likes/u4", "u2", "")
+	assertWithdrawResponse(t, repeat, withdrawResponse{Likes: 1})
+	likedAgain := request(t, api.handler, http.MethodPut, "/v1/me/likes/u4", "u2", "")
+	liked := decodeResponse[likeResponse](t, likedAgain)
+	if likedAgain.Code != http.StatusOK || !liked.Matched || !liked.MatchedNow {
+		t.Fatalf("like again=%+v status=%d", liked, likedAgain.Code)
+	}
+}
+
+func assertWithdrawResponse(t *testing.T, resp *httptest.ResponseRecorder, want withdrawResponse) {
+	t.Helper()
+	got := decodeResponse[withdrawResponse](t, resp)
+	if resp.Code != http.StatusOK || got != want {
+		t.Fatalf("response=%+v status=%d, want %+v", got, resp.Code, want)
+	}
+}
+
 func TestBlockDeactivatesMatchAndIsIdempotent(t *testing.T) {
 	api := newTestAPI(t)
 	for _, like := range []struct {
@@ -334,6 +369,11 @@ func (s *reactionSpy) Like(context.Context, string, string) (reaction.Result, er
 	return s.result, s.err
 }
 
+func (s *reactionSpy) Withdraw(context.Context, string, string) (reaction.WithdrawResult, error) {
+	s.calls++
+	return reaction.WithdrawResult{}, s.err
+}
+
 type blockSpy struct{ calls int }
 
 func (s *blockSpy) Block(context.Context, string, string) (block.Result, error) {
@@ -379,6 +419,9 @@ func TestInvalidInputDoesNotCallBusinessServices(t *testing.T) {
 		{"like id", http.MethodPut, "/v1/me/likes/bad", "u1", ""},
 		{"like query", http.MethodPut, "/v1/me/likes/u2?actor=u2", "u1", ""},
 		{"like body", http.MethodPut, "/v1/me/likes/u2", "u1", `{}`},
+		{"withdraw id", http.MethodDelete, "/v1/me/likes/bad", "u1", ""},
+		{"withdraw query", http.MethodDelete, "/v1/me/likes/u2?actor=u2", "u1", ""},
+		{"withdraw body", http.MethodDelete, "/v1/me/likes/u2", "u1", `{}`},
 		{"block id", http.MethodPut, "/v1/me/blocks/bad", "u1", ""},
 		{"block query", http.MethodPut, "/v1/me/blocks/u2?actor=u2", "u1", ""},
 		{"block body", http.MethodPut, "/v1/me/blocks/u2", "u1", `{}`},
