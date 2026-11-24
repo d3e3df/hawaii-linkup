@@ -13,6 +13,10 @@ import (
 type Config struct {
 	AppAddress                   string
 	ProfileBaseURL               string
+	DatabaseURL                  string
+	DatabaseMaxConns             int32
+	DatabaseConnectTimeout       time.Duration
+	MigrationTimeout             time.Duration
 	CommandTimeout               time.Duration
 	ProfileClientTimeout         time.Duration
 	ProfileDialTimeout           time.Duration
@@ -29,6 +33,10 @@ func Default() Config {
 	return Config{
 		AppAddress:                   "127.0.0.1:8080",
 		ProfileBaseURL:               "http://127.0.0.1:8081",
+		DatabaseURL:                  "postgres://linkup:linkup@127.0.0.1:5432/linkup?sslmode=disable",
+		DatabaseMaxConns:             10,
+		DatabaseConnectTimeout:       5 * time.Second,
+		MigrationTimeout:             30 * time.Second,
 		CommandTimeout:               300 * time.Millisecond,
 		ProfileClientTimeout:         time.Second,
 		ProfileDialTimeout:           500 * time.Millisecond,
@@ -50,11 +58,14 @@ func load(getenv func(string) string) (Config, error) {
 	config := Default()
 	config.AppAddress = valueOrDefault(getenv("LINKUP_ADDR"), config.AppAddress)
 	config.ProfileBaseURL = valueOrDefault(getenv("PROFILE_BASE_URL"), config.ProfileBaseURL)
+	config.DatabaseURL = valueOrDefault(getenv("DATABASE_URL"), config.DatabaseURL)
 
 	durations := []struct {
 		name   string
 		target *time.Duration
 	}{
+		{"LINKUP_DB_CONNECT_TIMEOUT", &config.DatabaseConnectTimeout},
+		{"LINKUP_MIGRATION_TIMEOUT", &config.MigrationTimeout},
 		{"LINKUP_COMMAND_TIMEOUT", &config.CommandTimeout},
 		{"PROFILE_CLIENT_TIMEOUT", &config.ProfileClientTimeout},
 		{"PROFILE_DIAL_TIMEOUT", &config.ProfileDialTimeout},
@@ -71,6 +82,13 @@ func load(getenv func(string) string) (Config, error) {
 	}
 	if err := applyPositiveInt64(getenv("PROFILE_MAX_RESPONSE_BYTES"), "PROFILE_MAX_RESPONSE_BYTES", &config.ProfileMaxResponseBytes); err != nil {
 		return Config{}, err
+	}
+	if raw := getenv("LINKUP_DB_MAX_CONNS"); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || value <= 0 {
+			return Config{}, fmt.Errorf("LINKUP_DB_MAX_CONNS must be a positive 32-bit integer, got %q", raw)
+		}
+		config.DatabaseMaxConns = int32(value)
 	}
 	if raw := getenv("LINKUP_MAX_HEADER_BYTES"); raw != "" {
 		value, err := strconv.Atoi(raw)
@@ -117,10 +135,15 @@ func (c Config) Validate() error {
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return fmt.Errorf("PROFILE_BASE_URL must be an absolute http(s) URL, got %q", c.ProfileBaseURL)
 	}
+	if err := validateDatabaseURL(c.DatabaseURL); err != nil {
+		return err
+	}
 	durations := []struct {
 		name  string
 		value time.Duration
 	}{
+		{"LINKUP_DB_CONNECT_TIMEOUT", c.DatabaseConnectTimeout},
+		{"LINKUP_MIGRATION_TIMEOUT", c.MigrationTimeout},
 		{"LINKUP_COMMAND_TIMEOUT", c.CommandTimeout},
 		{"PROFILE_CLIENT_TIMEOUT", c.ProfileClientTimeout},
 		{"PROFILE_DIAL_TIMEOUT", c.ProfileDialTimeout},
@@ -135,11 +158,19 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%s must be positive", duration.name)
 		}
 	}
-	if c.ProfileMaxResponseBytes <= 0 || c.MaxHeaderBytes <= 0 {
-		return errors.New("response and header limits must be positive")
+	if c.ProfileMaxResponseBytes <= 0 || c.MaxHeaderBytes <= 0 || c.DatabaseMaxConns <= 0 {
+		return errors.New("response, header and database limits must be positive")
 	}
 	if c.WriteTimeout <= c.CommandTimeout {
 		return errors.New("LINKUP_WRITE_TIMEOUT must exceed LINKUP_COMMAND_TIMEOUT")
+	}
+	return nil
+}
+
+func validateDatabaseURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
+		return fmt.Errorf("DATABASE_URL must be an absolute postgres URL, got %q", raw)
 	}
 	return nil
 }
