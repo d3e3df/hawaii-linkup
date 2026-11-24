@@ -19,6 +19,8 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadEnvironment(t *testing.T) {
 	values := map[string]string{
 		"LINKUP_ADDR":                     "127.0.0.1:9090",
+		"DATABASE_URL":                    "postgres://linkup:linkup@127.0.0.1:55432/linkup?sslmode=disable",
+		"LINKUP_DB_MAX_CONNS":             "4",
 		"LINKUP_COMMAND_TIMEOUT":          "1s",
 		"LINKUP_WRITE_TIMEOUT":            "3s",
 		"PROFILE_MAX_RESPONSE_BYTES":      "2048",
@@ -31,7 +33,8 @@ func TestLoadEnvironment(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 	if config.AppAddress != "127.0.0.1:9090" || config.CommandTimeout != time.Second ||
-		config.ProfileMaxResponseBytes != 2048 || config.MaxHeaderBytes != 4096 {
+		config.ProfileMaxResponseBytes != 2048 || config.MaxHeaderBytes != 4096 ||
+		config.DatabaseMaxConns != 4 || !strings.Contains(config.DatabaseURL, ":55432/") {
 		t.Fatalf("unexpected config: %+v", config)
 	}
 }
@@ -40,6 +43,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 	tests := []map[string]string{
 		{"LINKUP_ADDR": "bad"},
 		{"PROFILE_BASE_URL": "file:///tmp/profile"},
+		{"DATABASE_URL": "file:///tmp/linkup"},
+		{"LINKUP_DB_MAX_CONNS": "0"},
+		{"LINKUP_DB_CONNECT_TIMEOUT": "0"},
 		{"LINKUP_COMMAND_TIMEOUT": "0"},
 		{"LINKUP_COMMAND_TIMEOUT": "bad"},
 		{"PROFILE_MAX_RESPONSE_BYTES": "-1"},

@@ -137,6 +137,10 @@ Actor определяется только через `X-Demo-User`; body от�
 |---|---|---|
 | `LINKUP_ADDR` | `127.0.0.1:8080` | Адрес приложения |
 | `PROFILE_BASE_URL` | `http://127.0.0.1:8081` | Base URL Profile API |
+| `DATABASE_URL` | `postgres://linkup:linkup@127.0.0.1:5432/linkup?sslmode=disable` | PostgreSQL source of truth |
+| `LINKUP_DB_MAX_CONNS` | `10` | Максимум соединений pool |
+| `LINKUP_DB_CONNECT_TIMEOUT` | `5s` | Создание и проверка pool |
+| `LINKUP_MIGRATION_TIMEOUT` | `30s` | Общий предел миграций и fixtures |
 | `LINKUP_COMMAND_TIMEOUT` | `300ms` | Единый бюджет команды Like |
 | `PROFILE_CLIENT_TIMEOUT` | `1s` | Отдельный предел `http.Client` |
 | `PROFILE_DIAL_TIMEOUT` | `500ms` | Timeout установления сетевого соединения |
@@ -154,3 +158,85 @@ Actor определяется только через `X-Demo-User`; body от�
 Все durations, размеры и лимиты должны быть положительными; URL и адреса проверяются при старте. Для Like используется один context с command budget, унаследованный от request context. HTTP client timeout и response-header timeout задаются отдельно и не начинают независимый бюджет внутри application.
 
 Memory store защищён mutex, а Like выполняет read→decide→save под одной write-блокировкой пары; сетевой вызов происходит до блокировки. Данные хранятся только в памяти одного процесса, при перезапуске сбрасываются в fixtures. Несколько экземпляров приложения не делят состояние. Персистентность, распределённая идемпотентность и откат после уже совершённой записи не обещаются.
+
+## Архитектурные границы ЛР4
+
+HTTP API обслуживается слоем `internal/transport/http`; application-операции находятся в `internal/service` и разбиты по сущностям. Хранилища расположены в `internal/repository/{memory,postgres}`, доменные модели и общие ошибки — в `internal/domain/models` и `internal/domain/errors`. Transport не содержит предметных правил, service не содержит HTTP/SQL, а domain не зависит от остальных слоёв.
+
+Архитектурный перенос не меняет описанные выше маршруты, DTO, статусы и гарантии ЛР3. До добавления PostgreSQL-этапа runtime продолжает использовать memory store; внешний Profile API остаётся отдельной HTTP-зависимостью.
+
+# Контракт ЛР4: PostgreSQL и конкурирующие операции
+
+Новые гарантии и маршруты вводятся последовательно в PR3–PR6. После интеграции все операции выбранного сценария используют PostgreSQL как единственный источник истины; memory остаётся только в unit-тестах.
+
+## Состояния, actor и права
+
+Actor по-прежнему задаётся заголовком `X-Demo-User`. Like и Withdraw разрешены actor в отношении другого существующего активного профиля при отсутствии блокировки в любую сторону. Block разрешён существующему активному actor в отношении другого существующего профиля. Профиль редактирует только его владелец.
+
+| Состояние | Команда | Успех / повтор | Отказ |
+|---|---|---|---|
+| Нет реакции actor | `PUT /v1/me/likes/{targetID}` | Добавлена реакция; при встречной реакции активирован match | 404 отсутствует профиль; 409 self/inactive/blocked |
+| Реакция actor уже есть | Like | Прежний результат, `changed:false`, дубля нет | Права и блокировка проверяются заново |
+| Нет блокировки | `PUT /v1/me/blocks/{targetID}` | Создан block, активный match деактивирован | 404 отсутствует профиль; 409 self/inactive |
+| Block уже есть | Block | `changed:false`, `match_deactivated:false` | Права проверяются заново |
+| Есть реакция actor | `DELETE /v1/me/likes/{targetID}` | Реакция actor удалена, match деактивирован | 404 actor/target; 409 self/inactive |
+| Реакции actor нет | Withdraw | `changed:false`, `match_deactivated:false` | Права проверяются заново |
+| Профиль имеет version N | `PUT /v1/profiles/{userID}` | Владелец получает version N+1 | 404, 403 или 409 `version_conflict` |
+
+Реакции и историческая строка match после Block сохраняются, но match становится неактивным. Последующий Like запрещён; снятия блокировки нет. Withdraw удаляет только собственную реакцию. В pair response `matched` означает активный match, поэтому после Block возможны `likes:2` и `matched:false`. Повторный Like после Withdraw допустим по обычным правилам.
+
+## Новые DTO
+
+Block — `200 OK`:
+
+```json
+{"changed":true,"blocked":true,"match_deactivated":true}
+```
+
+Withdraw — `200 OK`:
+
+```json
+{"changed":true,"likes":1,"matched":false,"match_deactivated":true}
+```
+
+`GET /v1/profiles/{userID}` — `200 OK`:
+
+```json
+{"id":"u1","name":"Анна","age":25,"city":"Москва","interests":["music","travel"],"version":1}
+```
+
+`PUT /v1/profiles/{userID}` принимает полное представление и ожидаемую версию:
+
+```json
+{"name":"Анна","age":26,"city":"Москва","interests":["music","travel"],"version":1}
+```
+
+Успех возвращает обновлённый профиль с `version:2`. Редактируются только name, age, city и interests; active через этот API не изменяется. Тело ограничено 64 KiB, требуется `Content-Type: application/json`, неизвестные поля и дополнительные JSON-документы запрещены. После `version_conflict` клиент заново читает профиль и согласовывает правку; автоматически подставлять новую версию в старый payload нельзя.
+
+## Транзакционная граница и ресурсы
+
+PostgreSQL хранит users, canonical pairs, направленные reactions, matches и blocks. Discovery, Like, Inspect, Block и Withdraw читают это же состояние. Результат сохраняется после перезапуска приложения.
+
+Все писатели Like/Block/Withdraw работают под `READ COMMITTED` и соблюдают один протокол: `INSERT pair ... ON CONFLICT` → `SELECT pair FOR UPDATE` → повторное чтение reactions/match/block → проверка actor/прав/перехода → связанные записи через один tx → проверенный Commit. Пара канонизируется `low_id < high_id`; операция захватывает только одну pair row, поэтому встречный порядок ресурсов исключён. Пустой предварительный SELECT и локальный mutex защитой не считаются.
+
+Сеть Profile API выполняется до Begin. Внешние изменяемые факты не входят в транзакционную гарантию PostgreSQL. Поле local `active`, влияющее на допуск, не редактируется Profile API редактирования. Ожидание pair lock и все SQL входят в общий command context. Rollback выполняется на каждом незавершённом выходе; успех возвращается только после Commit.
+
+Block атомарно создаёт запрет и меняет активность match. Withdraw атомарно удаляет реакцию и меняет активность match. Ошибка между SQL-операциями откатывает всю новую команду; прежние реакции другого пользователя сохраняются.
+
+## Ошибки и неизвестный исход
+
+| Причина | HTTP | `code` |
+|---|---:|---|
+| Некорректный JSON/поле/версия | 400 | `invalid_request` |
+| Некорректное JSON-тело | 400 | `invalid_json` |
+| Тело профиля больше 64 KiB | 413 | `body_too_large` |
+| Неверный Content-Type профиля | 415 | `unsupported_media_type` |
+| Профиль не найден | 404 | `profile_not_found` |
+| Редактирование чужого профиля | 403 | `profile_forbidden` |
+| Старая версия | 409 | `version_conflict` |
+| Self-block | 409 | `self_block` |
+| Запрещённый переход/отзыв | 409 | `interaction_conflict` |
+| Блокировка | 409 | `blocked` |
+| Timeout БД | 503 | `database_timeout` |
+| Serialization/deadlock/временный отказ tx | 503 | `transaction_retryable` |
+| Неизвестный результат Commit | 503 | `commit_unconfirmed` |
