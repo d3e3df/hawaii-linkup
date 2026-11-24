@@ -56,6 +56,16 @@ func (p Pair) WithLike(userID string) Pair {
 	return p
 }
 
+func (p Pair) WithoutLike(userID string) Pair {
+	switch userID {
+	case p.Key.Low:
+		p.LowLiked = false
+	case p.Key.High:
+		p.HighLiked = false
+	}
+	return p
+}
+
 func (p Pair) IsMatch() bool {
 	return p.LowLiked && p.HighLiked
 }
