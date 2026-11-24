@@ -56,6 +56,7 @@ func TestInitialSchemaConstraints(t *testing.T) {
 		{"unique user", "INSERT INTO users SELECT * FROM users WHERE id = 'u1'", "23505", "users_pkey"},
 		{"not null name", "INSERT INTO users (id, name, age, city, interests, active) VALUES ('u99', NULL, 20, 'Москва', '{}', true)", "23502", ""},
 		{"age check", "INSERT INTO users (id, name, age, city, interests, active) VALUES ('u99', 'Тест', 1, 'Москва', '{}', true)", "23514", "users_age_check"},
+		{"version check", "INSERT INTO users (id, name, age, city, interests, active, version) VALUES ('u99', 'Тест', 20, 'Москва', '{}', true, 0)", "23514", "users_version_positive"},
 		{"canonical pair", "INSERT INTO pairs VALUES ('u2', 'u1')", "23514", "pairs_canonical_order"},
 		{"pair foreign key", "INSERT INTO pairs VALUES ('u1', 'u99')", "23503", "pairs_high_id_fkey"},
 		{"unique reaction", "INSERT INTO reactions SELECT * FROM reactions WHERE actor_id = 'u1' AND target_id = 'u6'", "23505", "reactions_pkey"},

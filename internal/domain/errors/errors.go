@@ -9,4 +9,5 @@ var (
 	ErrDatabaseTimeout      = errors.New("database timeout")
 	ErrTransactionRetryable = errors.New("transaction retryable")
 	ErrCommitUnconfirmed    = errors.New("commit unconfirmed")
+	ErrVersionConflict      = errors.New("version conflict")
 )
