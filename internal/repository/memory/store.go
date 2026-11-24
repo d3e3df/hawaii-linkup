@@ -27,6 +27,9 @@ func NewStore() *Store {
 func (s *Store) AddUser(u domain.User) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if u.Version == 0 {
+		u.Version = 1
+	}
 	s.users = append(s.users, cloneUser(u))
 }
 

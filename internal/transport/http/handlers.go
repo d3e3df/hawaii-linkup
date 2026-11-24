@@ -9,6 +9,7 @@ import (
 	domain "hawaii-linkup/internal/domain/models"
 	"hawaii-linkup/internal/service/block"
 	"hawaii-linkup/internal/service/feed"
+	"hawaii-linkup/internal/service/profile"
 	"hawaii-linkup/internal/service/reaction"
 )
 
@@ -24,6 +25,11 @@ type BlockService interface {
 	Block(ctx context.Context, actorID, targetID string) (block.Result, error)
 }
 
+type ProfileService interface {
+	Get(ctx context.Context, userID string) (domain.User, error)
+	Update(ctx context.Context, actorID, userID string, update profile.Update) (domain.User, error)
+}
+
 type PairStorage interface {
 	LoadPairContext(ctx context.Context, key domain.PairKey) (domain.Pair, error)
 }
@@ -32,6 +38,7 @@ type Handler struct {
 	discovery      DiscoveryService
 	reactions      ReactionService
 	blocks         BlockService
+	profiles       ProfileService
 	pairs          PairStorage
 	commandTimeout time.Duration
 	logger         *slog.Logger
@@ -41,6 +48,7 @@ func NewHandler(
 	discovery DiscoveryService,
 	reactions ReactionService,
 	blocks BlockService,
+	profiles ProfileService,
 	pairs PairStorage,
 	commandTimeout time.Duration,
 	logger *slog.Logger,
@@ -52,6 +60,7 @@ func NewHandler(
 		discovery:      discovery,
 		reactions:      reactions,
 		blocks:         blocks,
+		profiles:       profiles,
 		pairs:          pairs,
 		commandTimeout: commandTimeout,
 		logger:         logger,
@@ -61,6 +70,8 @@ func NewHandler(
 	mux.Handle("GET /v1/me/discovery", h.withIdentity(http.HandlerFunc(h.discover)))
 	mux.Handle("PUT /v1/me/likes/{targetID}", h.withIdentity(http.HandlerFunc(h.like)))
 	mux.Handle("PUT /v1/me/blocks/{targetID}", h.withIdentity(http.HandlerFunc(h.block)))
+	mux.Handle("GET /v1/profiles/{userID}", h.withIdentity(http.HandlerFunc(h.getProfile)))
+	mux.Handle("PUT /v1/profiles/{userID}", h.withIdentity(http.HandlerFunc(h.updateProfile)))
 	mux.Handle("GET /v1/me/pairs/{targetID}", h.withIdentity(http.HandlerFunc(h.inspect)))
 	return withRequestID(requestLogger(mux, logger))
 }

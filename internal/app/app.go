@@ -14,6 +14,7 @@ import (
 	"hawaii-linkup/internal/repository/postgres"
 	"hawaii-linkup/internal/service/block"
 	"hawaii-linkup/internal/service/feed"
+	"hawaii-linkup/internal/service/profile"
 	"hawaii-linkup/internal/service/reaction"
 	httpapi "hawaii-linkup/internal/transport/http"
 )
@@ -22,6 +23,7 @@ type Storage interface {
 	feed.UserStorage
 	reaction.Storage
 	block.Storage
+	profile.Storage
 	httpapi.PairStorage
 }
 
@@ -43,6 +45,7 @@ func NewServer(settings config.Config, logger *slog.Logger, store Storage) (*htt
 		feed.NewService(store),
 		reaction.NewService(store, profiles),
 		block.NewService(store),
+		profile.NewService(store),
 		store,
 		settings.CommandTimeout,
 		logger,

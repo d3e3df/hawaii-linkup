@@ -22,6 +22,7 @@ import (
 	"hawaii-linkup/internal/service/block"
 	"hawaii-linkup/internal/service/eligibility"
 	"hawaii-linkup/internal/service/feed"
+	"hawaii-linkup/internal/service/profile"
 	"hawaii-linkup/internal/service/reaction"
 )
 
@@ -55,7 +56,7 @@ func newTestAPI(t *testing.T) testAPI {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := NewHandler(feed.NewService(store), reaction.NewService(store, client), block.NewService(store), store, 75*time.Millisecond, logger)
+	handler := NewHandler(feed.NewService(store), reaction.NewService(store, client), block.NewService(store), profile.NewService(store), store, 75*time.Millisecond, logger)
 	return testAPI{handler: handler, store: store, profileURL: profileServer.URL}
 }
 
@@ -65,6 +66,16 @@ func request(t *testing.T, handler http.Handler, method, path, actor string, bod
 	if actor != "" {
 		req.Header.Set("X-Demo-User", actor)
 	}
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	return resp
+}
+
+func jsonRequest(t *testing.T, handler http.Handler, path, actor, body, contentType string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, path, strings.NewReader(body))
+	req.Header.Set("X-Demo-User", actor)
+	req.Header.Set("Content-Type", contentType)
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 	return resp
@@ -142,6 +153,66 @@ func TestDiscoveryEmptyPageIsJSONarray(t *testing.T) {
 	}
 	if resp.Header().Get("X-Request-ID") == "" {
 		t.Fatal("request ID is empty")
+	}
+}
+
+func TestProfileVersionFlow(t *testing.T) {
+	api := newTestAPI(t)
+	initialResp := request(t, api.handler, http.MethodGet, "/v1/profiles/u2", "u1", "")
+	initial := decodeResponse[profileResponse](t, initialResp)
+	if initialResp.Code != http.StatusOK || initial.Version != 1 || initial.ID != "u2" {
+		t.Fatalf("initial=%+v status=%d", initial, initialResp.Code)
+	}
+	body := `{"name":"Борис Обновлённый","age":29,"city":"Москва","interests":["go"],"version":1}`
+	updatedResp := jsonRequest(t, api.handler, "/v1/profiles/u2", "u2", body, "application/json; charset=utf-8")
+	updated := decodeResponse[profileResponse](t, updatedResp)
+	if updatedResp.Code != http.StatusOK || updated.Version != 2 || updated.Name != "Борис Обновлённый" {
+		t.Fatalf("updated=%+v status=%d body=%s", updated, updatedResp.Code, updatedResp.Body.String())
+	}
+	staleResp := jsonRequest(t, api.handler, "/v1/profiles/u2", "u2", body, "application/json")
+	if staleResp.Code != http.StatusConflict || decodeResponse[errorResponse](t, staleResp).Code != "version_conflict" {
+		t.Fatalf("stale status=%d body=%s", staleResp.Code, staleResp.Body.String())
+	}
+	persistedResp := request(t, api.handler, http.MethodGet, "/v1/profiles/u2", "u1", "")
+	persisted := decodeResponse[profileResponse](t, persistedResp)
+	if persisted.Name != updated.Name || persisted.Version != 2 {
+		t.Fatalf("persisted=%+v", persisted)
+	}
+	forbidden := jsonRequest(t, api.handler, "/v1/profiles/u2", "u1", `{"name":"Чужая правка","age":30,"city":"Москва","interests":[],"version":2}`, "application/json")
+	if forbidden.Code != http.StatusForbidden || decodeResponse[errorResponse](t, forbidden).Code != "profile_forbidden" {
+		t.Fatalf("forbidden status=%d body=%s", forbidden.Code, forbidden.Body.String())
+	}
+	missing := request(t, api.handler, http.MethodGet, "/v1/profiles/u99", "u1", "")
+	if missing.Code != http.StatusNotFound || decodeResponse[errorResponse](t, missing).Code != "profile_not_found" {
+		t.Fatalf("missing status=%d body=%s", missing.Code, missing.Body.String())
+	}
+}
+
+func TestProfileRejectsInvalidJSONAndMedia(t *testing.T) {
+	api := newTestAPI(t)
+	tests := []struct {
+		name        string
+		body        string
+		contentType string
+		wantStatus  int
+		wantCode    string
+	}{
+		{"syntax", `{`, "application/json", 400, "invalid_json"},
+		{"unknown field", `{"name":"Имя","age":25,"city":"Москва","interests":[],"version":1,"admin":true}`, "application/json", 400, "invalid_json"},
+		{"second document", `{"name":"Имя","age":25,"city":"Москва","interests":[],"version":1}{}`, "application/json", 400, "invalid_json"},
+		{"missing interests", `{"name":"Имя","age":25,"city":"Москва","version":1}`, "application/json", 400, "invalid_request"},
+		{"old zero version", `{"name":"Имя","age":25,"city":"Москва","interests":[],"version":0}`, "application/json", 400, "invalid_request"},
+		{"media type", `{}`, "text/plain", 415, "unsupported_media_type"},
+		{"too large", strings.Repeat(" ", maxProfileBodyBytes+1), "application/json", 413, "body_too_large"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resp := jsonRequest(t, api.handler, "/v1/profiles/u2", "u2", test.body, test.contentType)
+			body := decodeResponse[errorResponse](t, resp)
+			if resp.Code != test.wantStatus || body.Code != test.wantCode {
+				t.Fatalf("status=%d body=%+v", resp.Code, body)
+			}
+		})
 	}
 }
 
@@ -270,6 +341,18 @@ func (s *blockSpy) Block(context.Context, string, string) (block.Result, error) 
 	return block.Result{}, nil
 }
 
+type profileSpy struct{ calls int }
+
+func (s *profileSpy) Get(context.Context, string) (domain.User, error) {
+	s.calls++
+	return domain.User{}, nil
+}
+
+func (s *profileSpy) Update(context.Context, string, string, profile.Update) (domain.User, error) {
+	s.calls++
+	return domain.User{}, nil
+}
+
 type pairSpy struct{ calls int }
 
 func (s *pairSpy) LoadPairContext(context.Context, domain.PairKey) (domain.Pair, error) {
@@ -299,6 +382,9 @@ func TestInvalidInputDoesNotCallBusinessServices(t *testing.T) {
 		{"block id", http.MethodPut, "/v1/me/blocks/bad", "u1", ""},
 		{"block query", http.MethodPut, "/v1/me/blocks/u2?actor=u2", "u1", ""},
 		{"block body", http.MethodPut, "/v1/me/blocks/u2", "u1", `{}`},
+		{"profile id", http.MethodGet, "/v1/profiles/u01", "u1", ""},
+		{"profile query", http.MethodGet, "/v1/profiles/u2?x=1", "u1", ""},
+		{"profile body", http.MethodGet, "/v1/profiles/u2", "u1", `{}`},
 		{"inspect id", http.MethodGet, "/v1/me/pairs/u01", "u1", ""},
 		{"inspect query", http.MethodGet, "/v1/me/pairs/u2?x=1", "u1", ""},
 		{"inspect body", http.MethodGet, "/v1/me/pairs/u2", "u1", `{}`},
@@ -308,14 +394,15 @@ func TestInvalidInputDoesNotCallBusinessServices(t *testing.T) {
 			discovery := &discoverySpy{}
 			reactions := &reactionSpy{}
 			blocks := &blockSpy{}
+			profiles := &profileSpy{}
 			pairs := &pairSpy{}
-			handler := NewHandler(discovery, reactions, blocks, pairs, time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			handler := NewHandler(discovery, reactions, blocks, profiles, pairs, time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			resp := request(t, handler, tt.method, tt.path, tt.actor, tt.body)
 			if resp.Code != http.StatusBadRequest {
 				t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 			}
-			if discovery.calls != 0 || reactions.calls != 0 || blocks.calls != 0 || pairs.calls != 0 {
-				t.Fatalf("business calls: discovery=%d reaction=%d blocks=%d pairs=%d", discovery.calls, reactions.calls, blocks.calls, pairs.calls)
+			if discovery.calls != 0 || reactions.calls != 0 || blocks.calls != 0 || profiles.calls != 0 || pairs.calls != 0 {
+				t.Fatalf("business calls: discovery=%d reaction=%d blocks=%d profiles=%d pairs=%d", discovery.calls, reactions.calls, blocks.calls, profiles.calls, pairs.calls)
 			}
 		})
 	}
@@ -337,6 +424,9 @@ func TestWrappedErrorsKeepStatusAndCode(t *testing.T) {
 		{fmt.Errorf("outer: %w", domainerrors.ErrDatabaseTimeout), 503, "database_timeout"},
 		{fmt.Errorf("outer: %w", domainerrors.ErrTransactionRetryable), 503, "transaction_retryable"},
 		{fmt.Errorf("outer: %w", domainerrors.ErrCommitUnconfirmed), 503, "commit_unconfirmed"},
+		{fmt.Errorf("outer: %w", profile.ErrNotFound), 404, "profile_not_found"},
+		{fmt.Errorf("outer: %w", profile.ErrForbidden), 403, "profile_forbidden"},
+		{fmt.Errorf("outer: %w", domainerrors.ErrVersionConflict), 409, "version_conflict"},
 		{fmt.Errorf("outer: %w", &reaction.NotAllowedError{Reason: eligibility.ReasonSelf}), 409, "self_like"},
 		{fmt.Errorf("outer: %w", &reaction.NotAllowedError{Reason: eligibility.ReasonBlocked}), 409, "blocked"},
 		{fmt.Errorf("outer: %w", &reaction.NotAllowedError{Reason: eligibility.ReasonInactive}), 409, "inactive_profile"},

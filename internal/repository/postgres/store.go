@@ -33,8 +33,8 @@ func (s *Store) GetUserContext(ctx context.Context, id string) (domain.User, err
 func getUser(ctx context.Context, querier rowQuerier, id string) (domain.User, error) {
 	var user domain.User
 	err := querier.QueryRow(ctx,
-		"SELECT id, name, age, city, interests, active FROM users WHERE id = $1", id,
-	).Scan(&user.ID, &user.Name, &user.Age, &user.City, &user.Interests, &user.Active)
+		"SELECT id, name, age, city, interests, active, version FROM users WHERE id = $1", id,
+	).Scan(&user.ID, &user.Name, &user.Age, &user.City, &user.Interests, &user.Active, &user.Version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.User{}, fmt.Errorf("postgres: user %s: %w", id, domainerrors.ErrNotFound)
 	}
@@ -45,7 +45,7 @@ func getUser(ctx context.Context, querier rowQuerier, id string) (domain.User, e
 }
 
 func (s *Store) ListUsersContext(ctx context.Context) ([]domain.User, error) {
-	rows, err := s.pool.Query(ctx, "SELECT id, name, age, city, interests, active FROM users ORDER BY id")
+	rows, err := s.pool.Query(ctx, "SELECT id, name, age, city, interests, active, version FROM users ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list users: %w", databaseError(err))
 	}
@@ -53,7 +53,7 @@ func (s *Store) ListUsersContext(ctx context.Context) ([]domain.User, error) {
 	users := make([]domain.User, 0)
 	for rows.Next() {
 		var user domain.User
-		if err := rows.Scan(&user.ID, &user.Name, &user.Age, &user.City, &user.Interests, &user.Active); err != nil {
+		if err := rows.Scan(&user.ID, &user.Name, &user.Age, &user.City, &user.Interests, &user.Active, &user.Version); err != nil {
 			return nil, fmt.Errorf("postgres: scan user: %w", databaseError(err))
 		}
 		users = append(users, user)

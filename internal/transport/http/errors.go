@@ -11,6 +11,7 @@ import (
 	"hawaii-linkup/internal/service/block"
 	"hawaii-linkup/internal/service/eligibility"
 	"hawaii-linkup/internal/service/feed"
+	"hawaii-linkup/internal/service/profile"
 	"hawaii-linkup/internal/service/reaction"
 )
 
@@ -50,8 +51,14 @@ func classifyError(err error) (status int, code, message string) {
 		return http.StatusConflict, "self_block", "Нельзя заблокировать самого себя"
 	case errors.Is(err, block.ErrInactive):
 		return http.StatusConflict, "inactive_profile", "Профиль неактивен"
-	case errors.Is(err, block.ErrInvalidRequest):
+	case errors.Is(err, block.ErrInvalidRequest), errors.Is(err, profile.ErrInvalidRequest):
 		return http.StatusBadRequest, "invalid_request", "Некорректный запрос"
+	case errors.Is(err, profile.ErrForbidden):
+		return http.StatusForbidden, "profile_forbidden", "Редактировать можно только собственный профиль"
+	case errors.Is(err, profile.ErrNotFound):
+		return http.StatusNotFound, "profile_not_found", "Профиль не найден"
+	case errors.Is(err, domainerrors.ErrVersionConflict):
+		return http.StatusConflict, "version_conflict", "Профиль был изменён; перечитайте версию"
 	case errors.Is(err, profilehttp.ErrNotFound), errors.Is(err, domainerrors.ErrTargetNotFound):
 		return http.StatusNotFound, "target_not_found", "Целевой профиль не найден"
 	case errors.Is(err, domainerrors.ErrNotFound):

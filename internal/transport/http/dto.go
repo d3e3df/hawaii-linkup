@@ -35,12 +35,36 @@ type blockResponse struct {
 	MatchDeactivated bool `json:"match_deactivated"`
 }
 
+type profileResponse struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Age       int      `json:"age"`
+	City      string   `json:"city"`
+	Interests []string `json:"interests"`
+	Version   int      `json:"version"`
+}
+
+type profileUpdateRequest struct {
+	Name      string   `json:"name"`
+	Age       int      `json:"age"`
+	City      string   `json:"city"`
+	Interests []string `json:"interests"`
+	Version   int      `json:"version"`
+}
+
 type pairResponse struct {
 	TargetID  string `json:"target_id"`
 	LikedByMe bool   `json:"liked_by_me"`
 	LikedMe   bool   `json:"liked_me"`
 	Likes     int    `json:"likes"`
 	Matched   bool   `json:"matched"`
+}
+
+func newProfileResponse(user domain.User) profileResponse {
+	return profileResponse{
+		ID: user.ID, Name: user.Name, Age: user.Age, City: user.City,
+		Interests: user.Interests, Version: user.Version,
+	}
 }
 
 func newDiscoveryResponse(users []domain.User, limit, offset int) discoveryResponse {
