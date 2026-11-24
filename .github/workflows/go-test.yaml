@@ -31,6 +31,23 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://linkup:linkup@127.0.0.1:5432/linkup?sslmode=disable
+      TEST_DATABASE_URL: postgres://linkup:linkup@127.0.0.1:5432/linkup?sslmode=disable
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: linkup
+          POSTGRES_USER: linkup
+          POSTGRES_PASSWORD: linkup
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U linkup -d linkup"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     outputs:
       coverage: ${{ steps.cov.outputs.total }}
     steps:
@@ -105,3 +122,9 @@ jobs:
       - name: Fail job if tests failed
         if: steps.test.outcome == 'failure'
         run: exit 1
+
+      - name: Apply PostgreSQL migrations
+        run: go run ./cmd/migrate
+
+      - name: PostgreSQL integration tests
+        run: go test -v -tags=integration ${{ inputs.test-packages }}
