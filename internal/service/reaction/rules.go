@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"hawaii-linkup/internal/domain"
+	domain "hawaii-linkup/internal/domain/models"
 	"hawaii-linkup/internal/service/eligibility"
 	"hawaii-linkup/internal/service/interaction"
 )

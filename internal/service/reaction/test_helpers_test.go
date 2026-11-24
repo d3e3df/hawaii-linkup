@@ -3,7 +3,7 @@ package reaction
 import (
 	"context"
 
-	"hawaii-linkup/internal/domain"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 type profileProviderFunc func(ctx context.Context, id string) (domain.User, error)

@@ -1,6 +1,6 @@
 package memory
 
-import "hawaii-linkup/internal/domain"
+import domain "hawaii-linkup/internal/domain/models"
 
 func NewDemoStore() *Store {
 	s := NewStore()

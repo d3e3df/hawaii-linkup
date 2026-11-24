@@ -1,6 +1,6 @@
 package interaction
 
-import "hawaii-linkup/internal/domain"
+import domain "hawaii-linkup/internal/domain/models"
 
 type Outcome string
 

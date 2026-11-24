@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"hawaii-linkup/internal/domain"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 var ErrInvalidCriteria = errors.New("invalid criteria")

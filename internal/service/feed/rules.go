@@ -3,7 +3,7 @@ package feed
 import (
 	"strings"
 
-	"hawaii-linkup/internal/domain"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 func BuildFeed(users []domain.User, requesterID string, excluded []string, limit int) []domain.User {

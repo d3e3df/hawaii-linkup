@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"hawaii-linkup/internal/domain"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 func testUsers() []domain.User {

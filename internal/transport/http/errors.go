@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"hawaii-linkup/internal/adapter/profilehttp"
-	"hawaii-linkup/internal/domain"
+	domainerrors "hawaii-linkup/internal/domain/errors"
 	"hawaii-linkup/internal/service/eligibility"
 	"hawaii-linkup/internal/service/feed"
 	"hawaii-linkup/internal/service/reaction"
@@ -47,7 +47,7 @@ func classifyError(err error) (status int, code, message string) {
 		}
 	case errors.Is(err, profilehttp.ErrNotFound):
 		return http.StatusNotFound, "target_not_found", "Целевой профиль не найден"
-	case errors.Is(err, domain.ErrNotFound):
+	case errors.Is(err, domainerrors.ErrNotFound):
 		return http.StatusNotFound, "actor_not_found", "Текущий пользователь не найден"
 	case errors.Is(err, profilehttp.ErrTimeout), errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, "profile_timeout", "Profile API не ответил вовремя"

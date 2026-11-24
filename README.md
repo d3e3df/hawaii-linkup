@@ -172,3 +172,18 @@ rm /tmp/linkup-u2-u4.txt /tmp/linkup-u4-u2.txt
 ```
 
 Ожидание: оба ответа имеют статус 200 и `changed:true`; `matched_now:true` встречается ровно один раз. Порядок ответов не фиксирован. Затем выполнить запросы 5.3 и 5.4 из `.http`-файла.
+
+## Лабораторная работа №4
+
+Исходный коммит ЛР3: `90365f5035a2a6ebdb107e664033fe3b36c78d96`.
+
+### Слоистая архитектура
+
+В начале ЛР4 код разделён на три слоя и независимую доменную часть:
+
+* **Transport (`internal/transport/http`)**: HTTP handlers, DTO, validation, middleware и преобразование ошибок в HTTP-ответы.
+* **Service (`internal/service`)**: application-правила, разделённые по сущностям.
+* **Repository (`internal/repository`)**.
+* **Domain (`internal/domain/models`, `internal/domain/errors`)**: модели `User`, `Pair`, `PairKey` и общие предметные ошибки не зависят от transport, service и конкретного хранилища.
+
+Внешний Profile API по-прежнему изолирован в `internal/adapter/profilehttp`, а `internal/app` собирает зависимости.

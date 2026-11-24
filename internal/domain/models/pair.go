@@ -1,8 +1,4 @@
-package domain
-
-import "errors"
-
-var ErrInvalidPairKey = errors.New("invalid pair key")
+package models
 
 type PairKey struct {
 	Low  string
