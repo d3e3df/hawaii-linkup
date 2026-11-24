@@ -1,6 +1,6 @@
 package httpapi
 
-import "hawaii-linkup/internal/domain"
+import domain "hawaii-linkup/internal/domain/models"
 
 type errorResponse struct {
 	Code    string `json:"code"`

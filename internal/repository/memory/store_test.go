@@ -5,7 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"hawaii-linkup/internal/domain"
+	domainerrors "hawaii-linkup/internal/domain/errors"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 func TestStore_LoadPair_MissingIsInitialState(t *testing.T) {
@@ -150,7 +151,7 @@ func TestStore_InvalidKeyRejectedWithoutChanges(t *testing.T) {
 	saveErr := s.SavePair(wrong)
 	_, loadErr := s.LoadPair(wrong.Key)
 
-	if !errors.Is(saveErr, domain.ErrInvalidPairKey) || !errors.Is(loadErr, domain.ErrInvalidPairKey) {
+	if !errors.Is(saveErr, domainerrors.ErrInvalidPairKey) || !errors.Is(loadErr, domainerrors.ErrInvalidPairKey) {
 		t.Fatalf("ожидался ErrInvalidPairKey: save=%v, load=%v", saveErr, loadErr)
 	}
 	if got, _ := s.LoadPair(good.Key); got != good {

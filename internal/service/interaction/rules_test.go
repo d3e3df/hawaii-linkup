@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"hawaii-linkup/internal/domain"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 func activeUser(id string) domain.User {

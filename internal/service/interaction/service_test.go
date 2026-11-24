@@ -4,7 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"hawaii-linkup/internal/domain"
+	domainerrors "hawaii-linkup/internal/domain/errors"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 type fakeRepo struct {
@@ -33,7 +34,7 @@ func (f *fakeRepo) GetUser(id string) (domain.User, error) {
 	}
 	u, ok := f.users[id]
 	if !ok {
-		return domain.User{}, domain.ErrNotFound
+		return domain.User{}, domainerrors.ErrNotFound
 	}
 	return u, nil
 }
@@ -143,8 +144,8 @@ func TestService_Like_UserNotFound(t *testing.T) {
 
 	_, err := svc.Like("a", "unknown")
 
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("ожидалась domain.ErrNotFound, got %v", err)
+	if !errors.Is(err, domainerrors.ErrNotFound) {
+		t.Fatalf("ожидалась domainerrors.ErrNotFound, got %v", err)
 	}
 }
 

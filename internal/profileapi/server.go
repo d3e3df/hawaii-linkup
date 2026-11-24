@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"hawaii-linkup/internal/domain"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 type Mode string

@@ -1,8 +1,4 @@
-package domain
-
-import "errors"
-
-var ErrNotFound = errors.New("not found")
+package models
 
 type User struct {
 	ID        string

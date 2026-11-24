@@ -1,6 +1,6 @@
 package eligibility
 
-import "hawaii-linkup/internal/domain"
+import domain "hawaii-linkup/internal/domain/models"
 
 type Reason string
 

@@ -15,7 +15,8 @@ import (
 	"time"
 
 	"hawaii-linkup/internal/adapter/profilehttp"
-	"hawaii-linkup/internal/domain"
+	domainerrors "hawaii-linkup/internal/domain/errors"
+	domain "hawaii-linkup/internal/domain/models"
 	"hawaii-linkup/internal/profileapi"
 	"hawaii-linkup/internal/repository/memory"
 	"hawaii-linkup/internal/service/eligibility"
@@ -267,7 +268,7 @@ func TestWrappedErrorsKeepStatusAndCode(t *testing.T) {
 		{fmt.Errorf("outer: %w", profilehttp.ErrTimeout), 504, "profile_timeout"},
 		{fmt.Errorf("outer: %w", profilehttp.ErrInvalidResponse), 502, "profile_invalid_response"},
 		{fmt.Errorf("outer: %w", profilehttp.ErrResponseTooLarge), 502, "profile_response_too_large"},
-		{fmt.Errorf("outer: %w", domain.ErrNotFound), 404, "actor_not_found"},
+		{fmt.Errorf("outer: %w", domainerrors.ErrNotFound), 404, "actor_not_found"},
 		{fmt.Errorf("outer: %w", &reaction.NotAllowedError{Reason: eligibility.ReasonSelf}), 409, "self_like"},
 		{fmt.Errorf("outer: %w", &reaction.NotAllowedError{Reason: eligibility.ReasonBlocked}), 409, "blocked"},
 		{fmt.Errorf("outer: %w", &reaction.NotAllowedError{Reason: eligibility.ReasonInactive}), 409, "inactive_profile"},

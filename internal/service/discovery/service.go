@@ -3,7 +3,7 @@ package discovery
 import (
 	"fmt"
 
-	"hawaii-linkup/internal/domain"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 type UserStorage interface {

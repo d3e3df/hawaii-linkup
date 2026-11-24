@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"hawaii-linkup/internal/domain"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 var ErrInvalidRequest = errors.New("invalid request")

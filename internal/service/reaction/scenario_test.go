@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"hawaii-linkup/internal/domain"
+	domain "hawaii-linkup/internal/domain/models"
 	"hawaii-linkup/internal/repository/memory"
 	"hawaii-linkup/internal/service/eligibility"
 	"hawaii-linkup/internal/service/feed"

@@ -5,7 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"hawaii-linkup/internal/domain"
+	domainerrors "hawaii-linkup/internal/domain/errors"
+	domain "hawaii-linkup/internal/domain/models"
 	"hawaii-linkup/internal/service/interaction"
 )
 
@@ -40,7 +41,7 @@ func (f *fakeStorage) GetUser(id string) (domain.User, error) {
 	}
 	u, ok := f.users[id]
 	if !ok {
-		return domain.User{}, domain.ErrNotFound
+		return domain.User{}, domainerrors.ErrNotFound
 	}
 	return u, nil
 }
@@ -183,8 +184,8 @@ func TestLike_UserNotFound(t *testing.T) {
 
 	_, err := newTestService(fake).Like(context.Background(), "a", "nobody")
 
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("ожидался domain.ErrNotFound, got %v", err)
+	if !errors.Is(err, domainerrors.ErrNotFound) {
+		t.Fatalf("ожидался domainerrors.ErrNotFound, got %v", err)
 	}
 	if fake.saves != 0 {
 		t.Fatal("при отсутствии пользователя запись не должна выполняться")

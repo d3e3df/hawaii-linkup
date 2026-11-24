@@ -11,10 +11,10 @@ import (
 
 	"hawaii-linkup/internal/adapter/profilehttp"
 	"hawaii-linkup/internal/config"
-	"hawaii-linkup/internal/httpapi"
 	"hawaii-linkup/internal/repository/memory"
 	"hawaii-linkup/internal/service/feed"
 	"hawaii-linkup/internal/service/reaction"
+	httpapi "hawaii-linkup/internal/transport/http"
 )
 
 func NewServer(settings config.Config, logger *slog.Logger) (*http.Server, error) {

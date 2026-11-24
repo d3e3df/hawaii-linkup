@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"hawaii-linkup/internal/domain"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 type stubLister struct {

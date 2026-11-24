@@ -6,7 +6,8 @@ import (
 	"slices"
 	"sync"
 
-	"hawaii-linkup/internal/domain"
+	domainerrors "hawaii-linkup/internal/domain/errors"
+	domain "hawaii-linkup/internal/domain/models"
 )
 
 type Store struct {
@@ -60,7 +61,7 @@ func (s *Store) getUser(id string) (domain.User, error) {
 			return cloneUser(u), nil
 		}
 	}
-	return domain.User{}, domain.ErrNotFound
+	return domain.User{}, domainerrors.ErrNotFound
 }
 
 func (s *Store) IsBlocked(a, b string) (bool, error) {
@@ -90,7 +91,7 @@ func (s *Store) BlockedIDs(userID string) ([]string, error) {
 
 func (s *Store) LoadPair(key domain.PairKey) (domain.Pair, error) {
 	if !key.Valid() {
-		return domain.Pair{}, fmt.Errorf("memory: %w: %+v", domain.ErrInvalidPairKey, key)
+		return domain.Pair{}, fmt.Errorf("memory: %w: %+v", domainerrors.ErrInvalidPairKey, key)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -107,7 +108,7 @@ func (s *Store) loadPair(key domain.PairKey) domain.Pair {
 
 func (s *Store) SavePair(p domain.Pair) error {
 	if !p.Key.Valid() {
-		return fmt.Errorf("memory: %w: %+v", domain.ErrInvalidPairKey, p.Key)
+		return fmt.Errorf("memory: %w: %+v", domainerrors.ErrInvalidPairKey, p.Key)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -121,10 +122,10 @@ func (s *Store) UpdatePair(
 	update func(current domain.Pair, blocked bool) (domain.Pair, error),
 ) (domain.Pair, error) {
 	if !key.Valid() {
-		return domain.Pair{}, fmt.Errorf("memory: %w: %+v", domain.ErrInvalidPairKey, key)
+		return domain.Pair{}, fmt.Errorf("memory: %w: %+v", domainerrors.ErrInvalidPairKey, key)
 	}
 	if otherID != key.Low && otherID != key.High {
-		return domain.Pair{}, fmt.Errorf("memory: %w: other user is outside pair", domain.ErrInvalidPairKey)
+		return domain.Pair{}, fmt.Errorf("memory: %w: other user is outside pair", domainerrors.ErrInvalidPairKey)
 	}
 	if update == nil {
 		return domain.Pair{}, errors.New("memory: nil pair update")
@@ -138,7 +139,7 @@ func (s *Store) UpdatePair(
 		return domain.Pair{}, err
 	}
 	if next.Key != key {
-		return domain.Pair{}, fmt.Errorf("memory: %w: update changed key", domain.ErrInvalidPairKey)
+		return domain.Pair{}, fmt.Errorf("memory: %w: update changed key", domainerrors.ErrInvalidPairKey)
 	}
 	if next != current {
 		s.pairs[key] = next
@@ -156,7 +157,7 @@ func (s *Store) SaveLike(from, to string) error {
 func (s *Store) HasLiked(from, to string) (bool, error) {
 	key := domain.NewPairKey(from, to)
 	if !key.Valid() {
-		return false, fmt.Errorf("memory: %w: %+v", domain.ErrInvalidPairKey, key)
+		return false, fmt.Errorf("memory: %w: %+v", domainerrors.ErrInvalidPairKey, key)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
