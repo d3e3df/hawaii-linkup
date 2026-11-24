@@ -45,7 +45,7 @@ func classifyError(err error) (status int, code, message string) {
 		default:
 			return http.StatusConflict, "like_not_allowed", "Действие запрещено текущим состоянием"
 		}
-	case errors.Is(err, profilehttp.ErrNotFound):
+	case errors.Is(err, profilehttp.ErrNotFound), errors.Is(err, domainerrors.ErrTargetNotFound):
 		return http.StatusNotFound, "target_not_found", "Целевой профиль не найден"
 	case errors.Is(err, domainerrors.ErrNotFound):
 		return http.StatusNotFound, "actor_not_found", "Текущий пользователь не найден"
@@ -59,6 +59,12 @@ func classifyError(err error) (status int, code, message string) {
 		return http.StatusBadGateway, "profile_unavailable", "Profile API недоступен"
 	case errors.Is(err, feed.ErrInvalidRequest), errors.Is(err, reaction.ErrInvalidRequest):
 		return http.StatusBadRequest, "invalid_request", "Некорректный запрос"
+	case errors.Is(err, domainerrors.ErrDatabaseTimeout):
+		return http.StatusServiceUnavailable, "database_timeout", "Превышен бюджет операции с базой данных"
+	case errors.Is(err, domainerrors.ErrTransactionRetryable):
+		return http.StatusServiceUnavailable, "transaction_retryable", "Операцию можно повторить позже"
+	case errors.Is(err, domainerrors.ErrCommitUnconfirmed):
+		return http.StatusServiceUnavailable, "commit_unconfirmed", "Результат операции неизвестен; проверьте состояние"
 	default:
 		return http.StatusInternalServerError, "internal_error", "Внутренняя ошибка сервера"
 	}

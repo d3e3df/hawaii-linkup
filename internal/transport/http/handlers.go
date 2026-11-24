@@ -12,7 +12,7 @@ import (
 )
 
 type DiscoveryService interface {
-	Page(requesterID string, query feed.Query) ([]domain.User, error)
+	PageContext(ctx context.Context, requesterID string, query feed.Query) ([]domain.User, error)
 }
 
 type ReactionService interface {
@@ -20,7 +20,7 @@ type ReactionService interface {
 }
 
 type PairStorage interface {
-	LoadPair(key domain.PairKey) (domain.Pair, error)
+	LoadPairContext(ctx context.Context, key domain.PairKey) (domain.Pair, error)
 }
 
 type Handler struct {
@@ -75,7 +75,7 @@ func (h *Handler) discover(w http.ResponseWriter, r *http.Request) {
 		h.writeErrorCode(w, http.StatusBadRequest, "invalid_query", "Некорректные limit или offset")
 		return
 	}
-	users, err := h.discovery.Page(actorID(r.Context()), feed.Query{Interest: interest, Limit: limit, Offset: offset})
+	users, err := h.discovery.PageContext(r.Context(), actorID(r.Context()), feed.Query{Interest: interest, Limit: limit, Offset: offset})
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -128,7 +128,7 @@ func (h *Handler) inspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorID(r.Context())
-	pair, err := h.pairs.LoadPair(domain.NewPairKey(actor, targetID))
+	pair, err := h.pairs.LoadPairContext(r.Context(), domain.NewPairKey(actor, targetID))
 	if err != nil {
 		h.writeError(w, r, err)
 		return

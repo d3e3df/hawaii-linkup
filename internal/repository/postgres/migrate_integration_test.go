@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"testing"
 	"time"
 
@@ -30,8 +31,12 @@ func TestMigrateIsVersionedAndRepeatable(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
-	if users != 8 || applied != 1 {
-		t.Fatalf("users=%d migrations=%d, want 8 and 1", users, applied)
+	migrationNames, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if users != 8 || applied != len(migrationNames) {
+		t.Fatalf("users=%d migrations=%d, want 8 and %d", users, applied, len(migrationNames))
 	}
 }
 
@@ -53,6 +58,9 @@ func TestInitialSchemaConstraints(t *testing.T) {
 		{"age check", "INSERT INTO users (id, name, age, city, interests, active) VALUES ('u99', 'Тест', 1, 'Москва', '{}', true)", "23514", "users_age_check"},
 		{"canonical pair", "INSERT INTO pairs VALUES ('u2', 'u1')", "23514", "pairs_canonical_order"},
 		{"pair foreign key", "INSERT INTO pairs VALUES ('u1', 'u99')", "23503", "pairs_high_id_fkey"},
+		{"unique reaction", "INSERT INTO reactions SELECT * FROM reactions WHERE actor_id = 'u1' AND target_id = 'u6'", "23505", "reactions_pkey"},
+		{"self reaction", "INSERT INTO reactions VALUES ('u1', 'u1')", "23514", "reactions_distinct_users"},
+		{"match foreign key", "INSERT INTO matches VALUES ('u3', 'u4', true)", "23503", "matches_low_id_high_id_fkey"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -35,16 +35,17 @@ func (p localProfiles) Get(ctx context.Context, id string) (domain.User, error) 
 
 var errSave = errors.New("save failed")
 
-func (c *countingStore) UpdatePair(
+func (c *countingStore) UpdatePairProtected(
+	ctx context.Context,
 	key domain.PairKey,
-	otherID string,
-	update func(current domain.Pair, blocked bool) (domain.Pair, error),
+	actorID, targetID string,
+	update func(current domain.Pair, actor, target domain.User, blocked bool) (domain.Pair, error),
 ) (domain.Pair, error) {
 	if c.failSave {
 		return domain.Pair{}, errSave
 	}
-	return c.Store.UpdatePair(key, otherID, func(current domain.Pair, blocked bool) (domain.Pair, error) {
-		next, err := update(current, blocked)
+	return c.Store.UpdatePairProtected(ctx, key, actorID, targetID, func(current domain.Pair, actor, target domain.User, blocked bool) (domain.Pair, error) {
+		next, err := update(current, actor, target, blocked)
 		if err == nil && next != current {
 			c.saves++
 		}

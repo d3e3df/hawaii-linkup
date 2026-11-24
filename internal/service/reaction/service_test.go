@@ -35,6 +35,10 @@ func newFake() *fakeStorage {
 	}
 }
 
+func (f *fakeStorage) GetUserContext(_ context.Context, id string) (domain.User, error) {
+	return f.GetUser(id)
+}
+
 func (f *fakeStorage) GetUser(id string) (domain.User, error) {
 	if err := f.getErr[id]; err != nil {
 		return domain.User{}, err
@@ -70,10 +74,11 @@ func (f *fakeStorage) SavePair(p domain.Pair) error {
 	return nil
 }
 
-func (f *fakeStorage) UpdatePair(
+func (f *fakeStorage) UpdatePairProtected(
+	_ context.Context,
 	key domain.PairKey,
-	_ string,
-	update func(current domain.Pair, blocked bool) (domain.Pair, error),
+	actorID, targetID string,
+	update func(current domain.Pair, actor, target domain.User, blocked bool) (domain.Pair, error),
 ) (domain.Pair, error) {
 	if f.loadErr != nil {
 		return domain.Pair{}, f.loadErr
@@ -81,11 +86,19 @@ func (f *fakeStorage) UpdatePair(
 	if f.blockErr != nil {
 		return domain.Pair{}, f.blockErr
 	}
+	actor, err := f.GetUser(actorID)
+	if err != nil {
+		return domain.Pair{}, err
+	}
+	target, err := f.GetUser(targetID)
+	if err != nil {
+		return domain.Pair{}, err
+	}
 	current, err := f.LoadPair(key)
 	if err != nil {
 		return domain.Pair{}, err
 	}
-	next, err := update(current, f.blocked)
+	next, err := update(current, actor, target, f.blocked)
 	if err != nil {
 		return domain.Pair{}, err
 	}

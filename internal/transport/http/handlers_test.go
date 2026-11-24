@@ -78,7 +78,7 @@ func decodeResponse[T any](t *testing.T, resp *httptest.ResponseRecorder) T {
 	return value
 }
 
-//nolint:gocognit,gocyclo // Сквозной сценарий намеренно сохраняет порядок пользовательских шагов.
+//nolint:gocognit,gocyclo
 func TestBusinessFlowPagesLikeRepeatInspectAndMatch(t *testing.T) {
 	api := newTestAPI(t)
 
@@ -194,7 +194,7 @@ func setProfileMode(t *testing.T, baseURL string, mode profileapi.Mode) {
 
 type discoverySpy struct{ calls int }
 
-func (s *discoverySpy) Page(string, feed.Query) ([]domain.User, error) {
+func (s *discoverySpy) PageContext(context.Context, string, feed.Query) ([]domain.User, error) {
 	s.calls++
 	return nil, nil
 }
@@ -212,7 +212,7 @@ func (s *reactionSpy) Like(context.Context, string, string) (reaction.Result, er
 
 type pairSpy struct{ calls int }
 
-func (s *pairSpy) LoadPair(domain.PairKey) (domain.Pair, error) {
+func (s *pairSpy) LoadPairContext(context.Context, domain.PairKey) (domain.Pair, error) {
 	s.calls++
 	return domain.Pair{}, nil
 }
@@ -269,6 +269,10 @@ func TestWrappedErrorsKeepStatusAndCode(t *testing.T) {
 		{fmt.Errorf("outer: %w", profilehttp.ErrInvalidResponse), 502, "profile_invalid_response"},
 		{fmt.Errorf("outer: %w", profilehttp.ErrResponseTooLarge), 502, "profile_response_too_large"},
 		{fmt.Errorf("outer: %w", domainerrors.ErrNotFound), 404, "actor_not_found"},
+		{fmt.Errorf("outer: %w", domainerrors.ErrTargetNotFound), 404, "target_not_found"},
+		{fmt.Errorf("outer: %w", domainerrors.ErrDatabaseTimeout), 503, "database_timeout"},
+		{fmt.Errorf("outer: %w", domainerrors.ErrTransactionRetryable), 503, "transaction_retryable"},
+		{fmt.Errorf("outer: %w", domainerrors.ErrCommitUnconfirmed), 503, "commit_unconfirmed"},
 		{fmt.Errorf("outer: %w", &reaction.NotAllowedError{Reason: eligibility.ReasonSelf}), 409, "self_like"},
 		{fmt.Errorf("outer: %w", &reaction.NotAllowedError{Reason: eligibility.ReasonBlocked}), 409, "blocked"},
 		{fmt.Errorf("outer: %w", &reaction.NotAllowedError{Reason: eligibility.ReasonInactive}), 409, "inactive_profile"},
