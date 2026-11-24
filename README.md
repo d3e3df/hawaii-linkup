@@ -182,8 +182,8 @@ rm /tmp/linkup-u2-u4.txt /tmp/linkup-u4-u2.txt
 В начале ЛР4 код разделён на три слоя и независимую доменную часть:
 
 * **Transport (`internal/transport/http`)**: HTTP handlers, DTO, validation, middleware и преобразование ошибок в HTTP-ответы.
-* **Service (`internal/service`)**: application-правила, разделённые по сущностям (`discovery`, `feed`, `eligibility`, `interaction`, `reaction`, `block`, `profile`). Слой не зависит от HTTP и SQL.
-* **Repository (`internal/repository`)**: интерфейсы хранения используются сервисами, а реализации разделены по технологиям. `postgres` является production-источником состояния; `memory` сохранён только для прежнего поведения и изолированных unit-тестов.
+* **Service (`internal/service`)**: application-правила, разделённые по сущностям.
+* **Repository (`internal/repository`)**.
 * **Domain (`internal/domain/models`, `internal/domain/errors`)**: модели `User`, `Pair`, `PairKey` и общие предметные ошибки не зависят от transport, service и конкретного хранилища.
 
 Внешний Profile API по-прежнему изолирован в `internal/adapter/profilehttp`, а `internal/app` собирает зависимости. Направление зависимостей: transport вызывает service, service — repository через интерфейсы; domain не импортирует остальные слои. Этот этап является структурным рефакторингом: HTTP-маршруты, DTO и бизнес-правила ЛР3 не изменены.
@@ -195,32 +195,6 @@ rm /tmp/linkup-u2-u4.txt /tmp/linkup-u4-u2.txt
 ```bash
 docker compose up -d postgres
 ```
-
-По умолчанию приложение и миграции используют `DATABASE_URL=postgres://linkup:linkup@127.0.0.1:5432/linkup?sslmode=disable`. Если host-порт 5432 занят, используйте `LINKUP_DB_PORT=55432 docker compose up -d postgres` и замените порт в `DATABASE_URL`/`TEST_DATABASE_URL` на 55432. Применить версионированные миграции и идемпотентные демонстрационные fixtures:
-
-```bash
-go run ./cmd/migrate
-```
-
-Применить только схему без fixtures: `go run ./cmd/migrate -fixtures=false`. Повторный запуск применяет только ещё не записанные в `schema_migrations` версии; существующая схема последовательно обновляется новыми SQL-файлами. Fixtures повторяют исходных восьми пользователей ЛР3 и начальные canonical pairs без дублей.
-
-Для полного сброса локальной демонстрационной БД:
-
-```bash
-docker compose down -v
-docker compose up -d postgres
-go run ./cmd/migrate
-```
-
-Integration-тесты требуют отдельную доступную БД и создают изолированную временную схему для каждого теста:
-
-```bash
-export TEST_DATABASE_URL='postgres://linkup:linkup@127.0.0.1:5432/linkup?sslmode=disable'
-go test -tags=integration ./...
-go test -race -tags=integration ./...
-```
-
-`TEST_DATABASE_URL` обязателен: его отсутствие завершает обязательный integration-набор ошибкой, а не Skip. Тестовые схемы удаляются после проверки; сбрасывать рабочую БД для их запуска не требуется. Полный контракт транзакций, блокировок, повторов, ошибок и новых операций находится в [api-contract.md](api-contract.md).
 
 ### A — атомарные реакции и match
 
