@@ -8,6 +8,7 @@ import (
 
 	"hawaii-linkup/internal/adapter/profilehttp"
 	domainerrors "hawaii-linkup/internal/domain/errors"
+	"hawaii-linkup/internal/service/block"
 	"hawaii-linkup/internal/service/eligibility"
 	"hawaii-linkup/internal/service/feed"
 	"hawaii-linkup/internal/service/reaction"
@@ -45,10 +46,25 @@ func classifyError(err error) (status int, code, message string) {
 		default:
 			return http.StatusConflict, "like_not_allowed", "Действие запрещено текущим состоянием"
 		}
+	case errors.Is(err, block.ErrSelfBlock):
+		return http.StatusConflict, "self_block", "Нельзя заблокировать самого себя"
+	case errors.Is(err, block.ErrInactive):
+		return http.StatusConflict, "inactive_profile", "Профиль неактивен"
+	case errors.Is(err, block.ErrInvalidRequest):
+		return http.StatusBadRequest, "invalid_request", "Некорректный запрос"
 	case errors.Is(err, profilehttp.ErrNotFound), errors.Is(err, domainerrors.ErrTargetNotFound):
 		return http.StatusNotFound, "target_not_found", "Целевой профиль не найден"
 	case errors.Is(err, domainerrors.ErrNotFound):
 		return http.StatusNotFound, "actor_not_found", "Текущий пользователь не найден"
+	case errors.Is(err, feed.ErrInvalidRequest), errors.Is(err, reaction.ErrInvalidRequest):
+		return http.StatusBadRequest, "invalid_request", "Некорректный запрос"
+	default:
+		return classifyInfrastructureError(err)
+	}
+}
+
+func classifyInfrastructureError(err error) (status int, code, message string) {
+	switch {
 	case errors.Is(err, profilehttp.ErrTimeout), errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, "profile_timeout", "Profile API не ответил вовремя"
 	case errors.Is(err, profilehttp.ErrResponseTooLarge):
@@ -57,8 +73,6 @@ func classifyError(err error) (status int, code, message string) {
 		return http.StatusBadGateway, "profile_invalid_response", "Profile API вернул неверный ответ"
 	case errors.Is(err, profilehttp.ErrUnavailable):
 		return http.StatusBadGateway, "profile_unavailable", "Profile API недоступен"
-	case errors.Is(err, feed.ErrInvalidRequest), errors.Is(err, reaction.ErrInvalidRequest):
-		return http.StatusBadRequest, "invalid_request", "Некорректный запрос"
 	case errors.Is(err, domainerrors.ErrDatabaseTimeout):
 		return http.StatusServiceUnavailable, "database_timeout", "Превышен бюджет операции с базой данных"
 	case errors.Is(err, domainerrors.ErrTransactionRetryable):

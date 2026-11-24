@@ -19,6 +19,7 @@ import (
 	domain "hawaii-linkup/internal/domain/models"
 	"hawaii-linkup/internal/profileapi"
 	"hawaii-linkup/internal/repository/memory"
+	"hawaii-linkup/internal/service/block"
 	"hawaii-linkup/internal/service/eligibility"
 	"hawaii-linkup/internal/service/feed"
 	"hawaii-linkup/internal/service/reaction"
@@ -54,7 +55,7 @@ func newTestAPI(t *testing.T) testAPI {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := NewHandler(feed.NewService(store), reaction.NewService(store, client), store, 75*time.Millisecond, logger)
+	handler := NewHandler(feed.NewService(store), reaction.NewService(store, client), block.NewService(store), store, 75*time.Millisecond, logger)
 	return testAPI{handler: handler, store: store, profileURL: profileServer.URL}
 }
 
@@ -78,7 +79,7 @@ func decodeResponse[T any](t *testing.T, resp *httptest.ResponseRecorder) T {
 	return value
 }
 
-//nolint:gocognit,gocyclo
+//nolint:gocognit,gocyclo // Сквозной сценарий намеренно сохраняет порядок пользовательских шагов.
 func TestBusinessFlowPagesLikeRepeatInspectAndMatch(t *testing.T) {
 	api := newTestAPI(t)
 
@@ -141,6 +142,58 @@ func TestDiscoveryEmptyPageIsJSONarray(t *testing.T) {
 	}
 	if resp.Header().Get("X-Request-ID") == "" {
 		t.Fatal("request ID is empty")
+	}
+}
+
+func TestBlockDeactivatesMatchAndIsIdempotent(t *testing.T) {
+	api := newTestAPI(t)
+	for _, like := range []struct {
+		actor  string
+		target string
+	}{{"u2", "u4"}, {"u4", "u2"}} {
+		resp := request(t, api.handler, http.MethodPut, "/v1/me/likes/"+like.target, like.actor, "")
+		if resp.Code != http.StatusOK {
+			t.Fatalf("like %s -> %s: status=%d body=%s", like.actor, like.target, resp.Code, resp.Body.String())
+		}
+	}
+	first := request(t, api.handler, http.MethodPut, "/v1/me/blocks/u4", "u2", "")
+	blocked := decodeResponse[blockResponse](t, first)
+	if first.Code != http.StatusOK || !blocked.Changed || !blocked.Blocked || !blocked.MatchDeactivated {
+		t.Fatalf("first block=%+v status=%d", blocked, first.Code)
+	}
+	repeat := request(t, api.handler, http.MethodPut, "/v1/me/blocks/u4", "u2", "")
+	repeated := decodeResponse[blockResponse](t, repeat)
+	if repeat.Code != http.StatusOK || repeated.Changed || !repeated.Blocked || repeated.MatchDeactivated {
+		t.Fatalf("repeat block=%+v status=%d", repeated, repeat.Code)
+	}
+	pairResp := request(t, api.handler, http.MethodGet, "/v1/me/pairs/u4", "u2", "")
+	pair := decodeResponse[pairResponse](t, pairResp)
+	if pair.Likes != 2 || pair.Matched {
+		t.Fatalf("pair after block=%+v", pair)
+	}
+	like := request(t, api.handler, http.MethodPut, "/v1/me/likes/u4", "u2", "")
+	if like.Code != http.StatusConflict || decodeResponse[errorResponse](t, like).Code != "blocked" {
+		t.Fatalf("like after block: status=%d body=%s", like.Code, like.Body.String())
+	}
+}
+
+func TestBlockValidationAndNotFound(t *testing.T) {
+	api := newTestAPI(t)
+	tests := []struct {
+		target     string
+		wantStatus int
+		wantCode   string
+	}{
+		{"u2", http.StatusConflict, "self_block"},
+		{"u5", http.StatusConflict, "inactive_profile"},
+		{"u99", http.StatusNotFound, "target_not_found"},
+	}
+	for _, test := range tests {
+		resp := request(t, api.handler, http.MethodPut, "/v1/me/blocks/"+test.target, "u2", "")
+		body := decodeResponse[errorResponse](t, resp)
+		if resp.Code != test.wantStatus || body.Code != test.wantCode {
+			t.Fatalf("target=%s status=%d body=%+v", test.target, resp.Code, body)
+		}
 	}
 }
 
@@ -210,6 +263,13 @@ func (s *reactionSpy) Like(context.Context, string, string) (reaction.Result, er
 	return s.result, s.err
 }
 
+type blockSpy struct{ calls int }
+
+func (s *blockSpy) Block(context.Context, string, string) (block.Result, error) {
+	s.calls++
+	return block.Result{}, nil
+}
+
 type pairSpy struct{ calls int }
 
 func (s *pairSpy) LoadPairContext(context.Context, domain.PairKey) (domain.Pair, error) {
@@ -236,6 +296,9 @@ func TestInvalidInputDoesNotCallBusinessServices(t *testing.T) {
 		{"like id", http.MethodPut, "/v1/me/likes/bad", "u1", ""},
 		{"like query", http.MethodPut, "/v1/me/likes/u2?actor=u2", "u1", ""},
 		{"like body", http.MethodPut, "/v1/me/likes/u2", "u1", `{}`},
+		{"block id", http.MethodPut, "/v1/me/blocks/bad", "u1", ""},
+		{"block query", http.MethodPut, "/v1/me/blocks/u2?actor=u2", "u1", ""},
+		{"block body", http.MethodPut, "/v1/me/blocks/u2", "u1", `{}`},
 		{"inspect id", http.MethodGet, "/v1/me/pairs/u01", "u1", ""},
 		{"inspect query", http.MethodGet, "/v1/me/pairs/u2?x=1", "u1", ""},
 		{"inspect body", http.MethodGet, "/v1/me/pairs/u2", "u1", `{}`},
@@ -244,14 +307,15 @@ func TestInvalidInputDoesNotCallBusinessServices(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			discovery := &discoverySpy{}
 			reactions := &reactionSpy{}
+			blocks := &blockSpy{}
 			pairs := &pairSpy{}
-			handler := NewHandler(discovery, reactions, pairs, time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			handler := NewHandler(discovery, reactions, blocks, pairs, time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			resp := request(t, handler, tt.method, tt.path, tt.actor, tt.body)
 			if resp.Code != http.StatusBadRequest {
 				t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 			}
-			if discovery.calls != 0 || reactions.calls != 0 || pairs.calls != 0 {
-				t.Fatalf("business calls: discovery=%d reaction=%d pairs=%d", discovery.calls, reactions.calls, pairs.calls)
+			if discovery.calls != 0 || reactions.calls != 0 || blocks.calls != 0 || pairs.calls != 0 {
+				t.Fatalf("business calls: discovery=%d reaction=%d blocks=%d pairs=%d", discovery.calls, reactions.calls, blocks.calls, pairs.calls)
 			}
 		})
 	}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domain "hawaii-linkup/internal/domain/models"
+	"hawaii-linkup/internal/service/block"
 	"hawaii-linkup/internal/service/feed"
 	"hawaii-linkup/internal/service/reaction"
 )
@@ -19,6 +20,10 @@ type ReactionService interface {
 	Like(ctx context.Context, actorID, targetID string) (reaction.Result, error)
 }
 
+type BlockService interface {
+	Block(ctx context.Context, actorID, targetID string) (block.Result, error)
+}
+
 type PairStorage interface {
 	LoadPairContext(ctx context.Context, key domain.PairKey) (domain.Pair, error)
 }
@@ -26,6 +31,7 @@ type PairStorage interface {
 type Handler struct {
 	discovery      DiscoveryService
 	reactions      ReactionService
+	blocks         BlockService
 	pairs          PairStorage
 	commandTimeout time.Duration
 	logger         *slog.Logger
@@ -34,6 +40,7 @@ type Handler struct {
 func NewHandler(
 	discovery DiscoveryService,
 	reactions ReactionService,
+	blocks BlockService,
 	pairs PairStorage,
 	commandTimeout time.Duration,
 	logger *slog.Logger,
@@ -44,6 +51,7 @@ func NewHandler(
 	h := &Handler{
 		discovery:      discovery,
 		reactions:      reactions,
+		blocks:         blocks,
 		pairs:          pairs,
 		commandTimeout: commandTimeout,
 		logger:         logger,
@@ -52,6 +60,7 @@ func NewHandler(
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.Handle("GET /v1/me/discovery", h.withIdentity(http.HandlerFunc(h.discover)))
 	mux.Handle("PUT /v1/me/likes/{targetID}", h.withIdentity(http.HandlerFunc(h.like)))
+	mux.Handle("PUT /v1/me/blocks/{targetID}", h.withIdentity(http.HandlerFunc(h.block)))
 	mux.Handle("GET /v1/me/pairs/{targetID}", h.withIdentity(http.HandlerFunc(h.inspect)))
 	return withRequestID(requestLogger(mux, logger))
 }
@@ -113,6 +122,34 @@ func (h *Handler) like(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) block(w http.ResponseWriter, r *http.Request) {
+	targetID := r.PathValue("targetID")
+	if !validUserID(targetID) {
+		h.writeErrorCode(w, http.StatusBadRequest, "invalid_id", "Некорректный targetID")
+		return
+	}
+	if _, err := parseQuery(r.URL.RawQuery); err != nil || len(r.URL.Query()) != 0 {
+		h.writeErrorCode(w, http.StatusBadRequest, "invalid_query", "Query-параметры запрещены")
+		return
+	}
+	if rejectBody(r) != nil {
+		h.writeErrorCode(w, http.StatusBadRequest, "body_not_allowed", "Тело запроса запрещено")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), h.commandTimeout)
+	defer cancel()
+	result, err := h.blocks.Block(ctx, actorID(r.Context()), targetID)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, blockResponse{
+		Changed:          result.Changed,
+		Blocked:          result.Blocked,
+		MatchDeactivated: result.MatchDeactivated,
+	})
+}
+
 func (h *Handler) inspect(w http.ResponseWriter, r *http.Request) {
 	targetID := r.PathValue("targetID")
 	if !validUserID(targetID) {
@@ -138,6 +175,6 @@ func (h *Handler) inspect(w http.ResponseWriter, r *http.Request) {
 		LikedByMe: pair.HasLiked(actor),
 		LikedMe:   pair.HasLiked(targetID),
 		Likes:     pair.LikeCount(),
-		Matched:   pair.IsMatch(),
+		Matched:   pair.HasActiveMatch(),
 	})
 }

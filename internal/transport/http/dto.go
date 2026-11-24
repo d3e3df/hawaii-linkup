@@ -29,6 +29,12 @@ type likeResponse struct {
 	MatchedNow bool   `json:"matched_now"`
 }
 
+type blockResponse struct {
+	Changed          bool `json:"changed"`
+	Blocked          bool `json:"blocked"`
+	MatchDeactivated bool `json:"match_deactivated"`
+}
+
 type pairResponse struct {
 	TargetID  string `json:"target_id"`
 	LikedByMe bool   `json:"liked_by_me"`
