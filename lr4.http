@@ -1,0 +1,202 @@
+@baseUrl = http://127.0.0.1:8080
+@profileUrl = http://127.0.0.1:8081
+
+# Подготовка:
+#   docker compose up -d postgres
+#   go run ./cmd/migrate
+#   go run ./cmd/profileapi
+#   go run ./cmd/linkup
+# Если 5432 занят: LINKUP_DB_PORT=55432 docker compose up -d postgres
+# и DATABASE_URL=postgres://linkup:linkup@127.0.0.1:55432/linkup?sslmode=disable
+# Для повторения с исходного состояния: docker compose down -v, затем подготовка заново.
+
+### 0.1 Health LinkUp
+# Ожидание: 200 {"status":"ok"} и непустой X-Request-ID.
+GET {{baseUrl}}/healthz
+
+### 0.2 Health Profile API
+# Ожидание: 200 {"status":"ok"}.
+GET {{profileUrl}}/healthz
+
+### 1.1 Discovery из PostgreSQL
+# Ожидание: 200; items[].id=[u1,u6]; limit=2; offset=0.
+GET {{baseUrl}}/v1/me/discovery?interest=travel&limit=2&offset=0
+X-Demo-User: u3
+
+### 1.2 Пустая страница остаётся JSON array
+# Ожидание: 200; items=[].
+GET {{baseUrl}}/v1/me/discovery?interest=unknown&limit=2&offset=0
+X-Demo-User: u3
+
+### 2.1 Исходная пара u3/u1
+# Ожидание: 200; likes=0; matched=false.
+GET {{baseUrl}}/v1/me/pairs/u1
+X-Demo-User: u3
+
+### 2.2 Первый Like u3 -> u1
+# Ожидание: 200; outcome=pending; changed=true; likes=1; matched=false.
+PUT {{baseUrl}}/v1/me/likes/u1
+X-Demo-User: u3
+
+### 2.3 Повторный Like — no-op
+# Ожидание: 200; changed=false; likes=1; matched_now=false.
+PUT {{baseUrl}}/v1/me/likes/u1
+X-Demo-User: u3
+
+### 2.4 Выдача исключает лайкнутого u1
+# Ожидание: 200; items[].id=[u6,u7].
+GET {{baseUrl}}/v1/me/discovery?interest=travel&limit=2&offset=0
+X-Demo-User: u3
+
+### 2.5 Встречный Like создаёт единственный match
+# Ожидание: 200; outcome=match; changed=true; likes=2; matched=true; matched_now=true.
+PUT {{baseUrl}}/v1/me/likes/u3
+X-Demo-User: u1
+
+### 2.6 Повтор после match
+# Ожидание: 200; changed=false; likes=2; matched=true; matched_now=false.
+PUT {{baseUrl}}/v1/me/likes/u3
+X-Demo-User: u1
+
+### 2.7 Чтение результата
+# Ожидание: 200; liked_by_me=true; liked_me=true; likes=2; matched=true.
+GET {{baseUrl}}/v1/me/pairs/u1
+X-Demo-User: u3
+
+### 3.1 Profile API missing
+# Ожидание: 200; mode=missing.
+PUT {{profileUrl}}/_admin/mode/missing
+
+### 3.2 Зависимость отклоняет новый Like до транзакции
+# Ожидание: 404 target_not_found; новой реакции нет.
+PUT {{baseUrl}}/v1/me/likes/u2
+X-Demo-User: u3
+
+### 3.3 Состояние после missing
+# Ожидание: 200; likes=0; matched=false.
+GET {{baseUrl}}/v1/me/pairs/u2
+X-Demo-User: u3
+
+### 3.4 Вернуть Profile API ok
+# Ожидание: 200; mode=ok.
+PUT {{profileUrl}}/_admin/mode/ok
+
+### 4. Persistence
+# Перезапустить только LinkUp (Ctrl+C и go run ./cmd/linkup), затем повторить 2.7.
+# Ожидание сохраняется: likes=2, matched=true. SQL-проверка:
+# SELECT actor_id,target_id FROM reactions WHERE (actor_id,target_id) IN (('u1','u3'),('u3','u1')) ORDER BY 1,2;
+# SELECT low_id,high_id,active FROM matches WHERE low_id='u1' AND high_id='u3';
+# Ожидание: две направленные реакции и одна строка match с active=true.
+
+### 5.1 Блокировка деактивирует match u1/u3
+# Ожидание: 200; changed=true; blocked=true; match_deactivated=true.
+PUT {{baseUrl}}/v1/me/blocks/u3
+X-Demo-User: u1
+
+### 5.2 Повтор блокировки — no-op
+# Ожидание: 200; changed=false; blocked=true; match_deactivated=false.
+PUT {{baseUrl}}/v1/me/blocks/u3
+X-Demo-User: u1
+
+### 5.3 Реакции сохранены, match неактивен
+# Ожидание: 200; likes=2; matched=false.
+GET {{baseUrl}}/v1/me/pairs/u3
+X-Demo-User: u1
+
+### 5.4 Like после блокировки запрещён
+# Ожидание: 409 blocked.
+PUT {{baseUrl}}/v1/me/likes/u3
+X-Demo-User: u1
+
+### 5.5 Самоблокировка запрещена
+# Ожидание: 409 self_block.
+PUT {{baseUrl}}/v1/me/blocks/u1
+X-Demo-User: u1
+
+### 5.6 SQL-проверка B
+# SELECT blocker_id,blocked_id FROM blocks WHERE blocker_id='u1' AND blocked_id='u3';
+# SELECT active FROM matches WHERE low_id='u1' AND high_id='u3';
+# Ожидание: одна блокировка, active=false, две прежние реакции на месте.
+
+### 6.1 Чтение профиля с версией
+# Ожидание: 200; id=u2; version=1.
+GET {{baseUrl}}/v1/profiles/u2
+X-Demo-User: u1
+
+### 6.2 Первая правка версии 1
+# Ожидание: 200; name=Борис Обновлённый; version=2.
+PUT {{baseUrl}}/v1/profiles/u2
+X-Demo-User: u2
+Content-Type: application/json
+
+{"name":"Борис Обновлённый","age":29,"city":"Москва","interests":["music","go"],"version":1}
+
+### 6.3 Повтор старой правки отклонён
+# Ожидание: 409 version_conflict; первая правка сохранена.
+PUT {{baseUrl}}/v1/profiles/u2
+X-Demo-User: u2
+Content-Type: application/json
+
+{"name":"Старая правка","age":30,"city":"Москва","interests":[],"version":1}
+
+### 6.4 Профиль после конфликта
+# Ожидание: 200; name=Борис Обновлённый; version=2.
+GET {{baseUrl}}/v1/profiles/u2
+X-Demo-User: u1
+
+### 6.5 Редактирование чужого профиля запрещено
+# Ожидание: 403 profile_forbidden.
+PUT {{baseUrl}}/v1/profiles/u2
+X-Demo-User: u1
+Content-Type: application/json
+
+{"name":"Чужая правка","age":30,"city":"Москва","interests":[],"version":2}
+
+### 6.6 Отсутствующий профиль
+# Ожидание: 404 profile_not_found.
+GET {{baseUrl}}/v1/profiles/u99
+X-Demo-User: u1
+
+### 6.7 SQL-проверка C
+# SELECT id,name,version FROM users WHERE id='u2';
+# Ожидание: name=Борис Обновлённый, version=2.
+
+### 7.1 Подготовка match u2/u4
+# Ожидание: 200; changed=true; likes=1; matched=false.
+PUT {{baseUrl}}/v1/me/likes/u4
+X-Demo-User: u2
+
+### 7.2 Встречная реакция
+# Ожидание: 200; changed=true; likes=2; matched=true; matched_now=true.
+PUT {{baseUrl}}/v1/me/likes/u2
+X-Demo-User: u4
+
+### 7.3 Отзыв собственной реакции u2 -> u4
+# Ожидание: 200; changed=true; likes=1; matched=false; match_deactivated=true.
+DELETE {{baseUrl}}/v1/me/likes/u4
+X-Demo-User: u2
+
+### 7.4 Чужая реакция сохранена
+# Ожидание: 200; liked_by_me=false; liked_me=true; likes=1; matched=false.
+GET {{baseUrl}}/v1/me/pairs/u4
+X-Demo-User: u2
+
+### 7.5 Повторный Withdraw — no-op
+# Ожидание: 200; changed=false; likes=1; matched=false; match_deactivated=false.
+DELETE {{baseUrl}}/v1/me/likes/u4
+X-Demo-User: u2
+
+### 7.6 Кандидат снова в discovery
+# Ожидание: 200; среди items есть id=u4.
+GET {{baseUrl}}/v1/me/discovery?interest=music&limit=20&offset=0
+X-Demo-User: u2
+
+### 7.7 Повторный Like реактивирует match
+# Ожидание: 200; outcome=match; changed=true; likes=2; matched=true; matched_now=true.
+PUT {{baseUrl}}/v1/me/likes/u4
+X-Demo-User: u2
+
+### 7.8 SQL-проверка D
+# SELECT actor_id,target_id FROM reactions WHERE (actor_id,target_id) IN (('u2','u4'),('u4','u2')) ORDER BY 1,2;
+# SELECT active FROM matches WHERE low_id='u2' AND high_id='u4';
+# Сразу после 7.5: только u4->u2 и active=false; после 7.7: две реакции и active=true.

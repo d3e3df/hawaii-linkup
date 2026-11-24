@@ -175,25 +175,115 @@ rm /tmp/linkup-u2-u4.txt /tmp/linkup-u4-u2.txt
 
 ## Лабораторная работа №4
 
+Исходный коммит ЛР3: `90365f5035a2a6ebdb107e664033fe3b36c78d96`.
+
 ### Слоистая архитектура
 
 В начале ЛР4 код разделён на три слоя и независимую доменную часть:
 
 * **Transport (`internal/transport/http`)**: HTTP handlers, DTO, validation, middleware и преобразование ошибок в HTTP-ответы.
-* **Service (`internal/service`)**: application-правила, разделённые по сущностям.
-* **Repository (`internal/repository`)**.
+* **Service (`internal/service`)**: application-правила, разделённые по сущностям (`discovery`, `feed`, `eligibility`, `interaction`, `reaction`, `block`, `profile`). Слой не зависит от HTTP и SQL.
+* **Repository (`internal/repository`)**: интерфейсы хранения используются сервисами, а реализации разделены по технологиям. `postgres` является production-источником состояния; `memory` сохранён только для прежнего поведения и изолированных unit-тестов.
 * **Domain (`internal/domain/models`, `internal/domain/errors`)**: модели `User`, `Pair`, `PairKey` и общие предметные ошибки не зависят от transport, service и конкретного хранилища.
+
+Внешний Profile API по-прежнему изолирован в `internal/adapter/profilehttp`, а `internal/app` собирает зависимости. Направление зависимостей: transport вызывает service, service — repository через интерфейсы; domain не импортирует остальные слои. Этот этап является структурным рефакторингом: HTTP-маршруты, DTO и бизнес-правила ЛР3 не изменены.
 
 ### PostgreSQL: миграции и fixtures
 
-Для ЛР4 используется PostgreSQL 16 и `pgx/v5`. Запуск базы:
+Для ЛР4 используются Go 1.25+, PostgreSQL 16 и `pgx/v5` v5.13.0. Запуск базы:
 
 ```bash
 docker compose up -d postgres
 ```
 
-Применить версионированные миграции и идемпотентные демонстрационные fixtures:
+По умолчанию приложение и миграции используют `DATABASE_URL=postgres://linkup:linkup@127.0.0.1:5432/linkup?sslmode=disable`. Если host-порт 5432 занят, используйте `LINKUP_DB_PORT=55432 docker compose up -d postgres` и замените порт в `DATABASE_URL`/`TEST_DATABASE_URL` на 55432. Применить версионированные миграции и идемпотентные демонстрационные fixtures:
 
 ```bash
 go run ./cmd/migrate
 ```
+
+Применить только схему без fixtures: `go run ./cmd/migrate -fixtures=false`. Повторный запуск применяет только ещё не записанные в `schema_migrations` версии; существующая схема последовательно обновляется новыми SQL-файлами. Fixtures повторяют исходных восьми пользователей ЛР3 и начальные canonical pairs без дублей.
+
+Для полного сброса локальной демонстрационной БД:
+
+```bash
+docker compose down -v
+docker compose up -d postgres
+go run ./cmd/migrate
+```
+
+Integration-тесты требуют отдельную доступную БД и создают изолированную временную схему для каждого теста:
+
+```bash
+export TEST_DATABASE_URL='postgres://linkup:linkup@127.0.0.1:5432/linkup?sslmode=disable'
+go test -tags=integration ./...
+go test -race -tags=integration ./...
+```
+
+`TEST_DATABASE_URL` обязателен: его отсутствие завершает обязательный integration-набор ошибкой, а не Skip. Тестовые схемы удаляются после проверки; сбрасывать рабочую БД для их запуска не требуется. Полный контракт транзакций, блокировок, повторов, ошибок и новых операций находится в [api-contract.md](api-contract.md).
+
+### A — атомарные реакции и match
+
+Команда Like, состояние пары и discovery переведены на PostgreSQL. Направленная реакция и возникающий при взаимности match записываются в одной транзакции `READ COMMITTED`. Все писатели пары используют каноническую строку `pairs(low_id, high_id)` и `SELECT ... FOR UPDATE`; решающие проверки пользователей и перехода выполняются после захвата блокировки. Предварительный вызов Profile API остаётся вне транзакции.
+
+Повтор Like сохраняет прежний no-op, а `matched_now:true` возвращается только команде, создавшей активный match. Результат читается через `GET /v1/me/pairs/{targetID}`, влияет на выдачу и сохраняется при пересоздании приложения. Integration-тесты проверяют успех, повтор, встречную и повторную конкуренцию через разные соединения, rollback после промежуточного INSERT реакции, persistence и timeout ожидания блокировки.
+
+Перед запуском LinkUp теперь необходимо применить миграции и fixtures, затем использовать прежние команды `go run ./cmd/profileapi` и `go run ./cmd/linkup`. При нестандартном `LINKUP_DB_PORT` также установите соответствующий `DATABASE_URL`.
+
+### B — блокировка пользователя
+
+`PUT /v1/me/blocks/{targetID}` создаёт направленную блокировку текущего пользователя и в той же транзакции деактивирует активный match. Ответ содержит `changed`, `blocked` и `match_deactivated`; повтор возвращает `changed:false` без дубля. Направленные реакции сохраняются, поэтому состояние пары может быть `likes:2, matched:false`. Любая сторона блокировки исключается из discovery, а новый или повторный Like после блокировки отклоняется с `409 blocked`.
+
+Block использует ту же каноническую pair row и `SELECT ... FOR UPDATE`, что и Like. Блокировка пользователя, проверка прав, запись `blocks` и обновление `matches.active` атомарны. Integration-тесты проверяют rollback после INSERT блокировки, повтор, сохранность реакций, конкурентные Like/Block в обоих порядках и ограничения PK/FK/CHECK. Самоблокировка и неактивный участник возвращают `409 self_block` и `409 inactive_profile`, отсутствующая цель — `404 target_not_found`.
+
+### C — оптимистичная версия профиля
+
+`GET /v1/profiles/{userID}` возвращает полное представление профиля с положительной `version`. `PUT /v1/profiles/{userID}` доступен только владельцу и принимает полные `name`, `age`, `city`, `interests` и ожидаемую `version`. Обновление выполняется одним SQL `UPDATE ... WHERE id = ... AND version = ...` с атомарным увеличением версии. При двух правках от одной версии успешна только первая; вторая получает `409 version_conflict`, а сохранённые данные первой не затираются. Автоматический retry со старой формой не выполняется: клиент должен заново прочитать профиль и согласовать изменения.
+
+Тело ограничено 64 KiB, требуется `Content-Type: application/json`; неизвестные поля, второй JSON-документ, неполные или недопустимые значения отклоняются. Предусмотрены отдельные `403 profile_forbidden`, `404 profile_not_found`, `400 invalid_json`, `400 invalid_request`, `413 body_too_large` и `415 unsupported_media_type`. Integration-тесты покрывают последовательные и конкурентные правки одной версии, сохранность первой правки и DB CHECK `version > 0`.
+
+### D — отзыв реакции
+
+`DELETE /v1/me/likes/{targetID}` удаляет только направленную реакцию текущего пользователя и деактивирует активный match в той же транзакции. Ответ содержит `changed`, `likes`, `matched` и `match_deactivated`. Реакция второго пользователя сохраняется, повторный Withdraw является no-op, а кандидат снова доступен в discovery для отозвавшего реакцию пользователя. Новый Like после Withdraw снова допустим и при сохранённой встречной реакции реактивирует существующую строку match.
+
+Withdraw использует общий pair lock и повторно проверяет пользователей, права и блокировку после ожидания; сетевой Profile API для этой локальной команды не вызывается. Integration-тесты проверяют rollback после DELETE реакции через независимое соединение, повтор, сохранность чужой реакции, повторный Like, discovery и конкуренцию с Like и Block в значимых порядках. Если Block завершился первым, ожидающий Withdraw получает `409 blocked` и не удаляет реакции.
+
+### Инварианты и ограничения схемы
+
+- Одна направленная реакция на `(actor_id,target_id)`, одна canonical pair и не более одной исторической строки match на пару.
+- Активный match требует двух реакций и отсутствия блокировки. Этот многострочный инвариант обеспечивается общим pair lock всеми писателями Like/Block/Withdraw; UNIQUE сам по себе его не доказывает.
+- PK reactions/blocks/pairs/matches запрещают дубли, FK запрещают ссылки на отсутствующих пользователей и пары, CHECK запрещают self-like/self-block, неканоническую пару, недопустимый возраст, пустые name/city и неположительную version.
+- Все SQL параметризованы; запросы и ожидание lock ограничены request context. Commit проверяется, незавершённая транзакция откатывается, pool переиспользуется и закрывается при shutdown. Действия после `transaction_retryable` и `commit_unconfirmed` описаны в API-контракте.
+
+### Карта вклада и взаимного review
+
+| PR | Содержание | Автор | Review |
+|---|---|---|---|
+| PR1 | Первый MR: переход на transport/http + service по сущностям + repository/{db} + domain/models/errors | @acyushka | @d3e3df |
+| PR2 | API-контракт, PostgreSQL, миграции, fixtures, pool и CI foundation | @acyushka | @d3e3df |
+| PR3 / A | Атомарные reaction+match, чтение, повторы и persistence | @acyushka | @d3e3df |
+| PR4 / B | Блокировка, деактивация match и конфликт с Like | @d3e3df | @acyushka |
+| PR5 / C | GET/PUT профиля, права и ожидаемая версия | @acyushka | @d3e3df |
+| PR6 / D | Отзыв реакции и конфликты с Like/Block | @d3e3df | @acyushka |
+| PR7 | Итоговая документация, CI и воспроизводимая демонстрация | @d3e3df | @acyushka |
+
+### Воспроизводимая проверка и демонстрация
+
+1. Сбросить и поднять отдельную демонстрационную БД, применить миграции/fixtures командами выше, запустить Profile API и LinkUp.
+2. Выполнить [lr4.http](lr4.http) по порядку: A показывает успех/no-op/match, B — блокировку, C — `version_conflict`, D — отзыв и повторный Like. Комментарии содержат ожидаемые DTO и SQL-проверки. После шага A перезапустить только LinkUp и повторить GET пары: данные обязаны сохраниться.
+3. Промежуточные отказы, наблюдаемое ожидание и конкуренцию воспроизводят запускаемые проверки на реальном PostgreSQL, а не случайные curl: `TestReactionRollsBackAfterIntermediateInsert`, `TestBlockRollsBackAfterIntermediateInsert`, `TestWithdrawRollsBackAfterIntermediateDelete`, `TestConcurrentReciprocalReactionsCreateOneMatch`, `TestConcurrentLikeAndBlockSerializeOnPairLock`, `TestConcurrentLikeAndWithdrawSerializeOnPairLock`, `TestConcurrentWithdrawAndBlockSerializeOnPairLock`, `TestConcurrentProfileUpdatesAllowOnlyOneVersion`, `TestInitialSchemaConstraints` и `TestPairLockWaitHonorsContextAndReleases`.
+
+Полный локальный аналог CI:
+
+```bash
+test -z "$(gofmt -l .)"
+go build ./...
+go test ./...
+go vet ./...
+go test -race ./...
+golangci-lint run --config=.golangci.yaml --timeout=5m
+go test -tags=integration ./... -timeout=120s
+go test -race -tags=integration ./... -timeout=180s
+```
+
+Для двух последних команд необходим `TEST_DATABASE_URL`. GitHub Actions поднимает PostgreSQL 16 и выполняет обязательные integration-тесты без Skip.
