@@ -12,11 +12,12 @@ import (
 var ErrInvalidRequest = errors.New("invalid request")
 
 type Storage interface {
-	GetUser(id string) (domain.User, error)
-	UpdatePair(
+	GetUserContext(ctx context.Context, id string) (domain.User, error)
+	UpdatePairProtected(
+		ctx context.Context,
 		key domain.PairKey,
-		otherID string,
-		update func(current domain.Pair, blocked bool) (domain.Pair, error),
+		actorID, targetID string,
+		update func(current domain.Pair, actor, target domain.User, blocked bool) (domain.Pair, error),
 	) (domain.Pair, error)
 }
 
@@ -49,19 +50,23 @@ func (s *Service) Like(ctx context.Context, actorID, targetID string) (Result, e
 		return Result{}, errors.New("reaction: profile provider is nil")
 	}
 
-	actor, err := s.storage.GetUser(actorID)
+	actor, err := s.storage.GetUserContext(ctx, actorID)
 	if err != nil {
 		return Result{}, fmt.Errorf("reaction: получение пользователя %s: %w", actorID, err)
 	}
-	target, err := s.profiles.Get(ctx, targetID)
+	externalTarget, err := s.profiles.Get(ctx, targetID)
 	if err != nil {
 		return Result{}, fmt.Errorf("reaction: получение профиля %s: %w", targetID, err)
 	}
 
-	var decision Decision
 	key := domain.NewPairKey(actorID, targetID)
-	_, err = s.storage.UpdatePair(key, targetID, func(current domain.Pair, blocked bool) (domain.Pair, error) {
-		decision, err = Transition(current, actor, target, blocked)
+	if actorID == targetID {
+		_, err := Transition(domain.NewPair(key), actor, externalTarget, false)
+		return Result{}, fmt.Errorf("reaction: обновление пары: %w", err)
+	}
+	var decision Decision
+	_, err = s.storage.UpdatePairProtected(ctx, key, actorID, targetID, func(current domain.Pair, protectedActor, protectedTarget domain.User, blocked bool) (domain.Pair, error) {
+		decision, err = Transition(current, protectedActor, protectedTarget, blocked)
 		if err != nil {
 			return domain.Pair{}, err
 		}

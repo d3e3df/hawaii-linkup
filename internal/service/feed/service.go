@@ -1,6 +1,7 @@
 package feed
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -18,9 +19,9 @@ type Query struct {
 }
 
 type UserStorage interface {
-	ListUsers() ([]domain.User, error)
-	BlockedIDs(userID string) ([]string, error)
-	LikedIDs(userID string) ([]string, error)
+	ListUsersContext(ctx context.Context) ([]domain.User, error)
+	BlockedIDsContext(ctx context.Context, userID string) ([]string, error)
+	LikedIDsContext(ctx context.Context, userID string) ([]string, error)
 }
 
 type Service struct {
@@ -36,6 +37,10 @@ func (s *Service) Feed(requesterID string, limit int) ([]domain.User, error) {
 }
 
 func (s *Service) Page(requesterID string, query Query) ([]domain.User, error) {
+	return s.PageContext(context.Background(), requesterID, query)
+}
+
+func (s *Service) PageContext(ctx context.Context, requesterID string, query Query) ([]domain.User, error) {
 	if requesterID == "" {
 		return nil, fmt.Errorf("%w: пустой requesterID", ErrInvalidRequest)
 	}
@@ -46,15 +51,15 @@ func (s *Service) Page(requesterID string, query Query) ([]domain.User, error) {
 		return nil, fmt.Errorf("%w: offset должен быть неотрицательным", ErrInvalidRequest)
 	}
 
-	blocked, err := s.storage.BlockedIDs(requesterID)
+	blocked, err := s.storage.BlockedIDsContext(ctx, requesterID)
 	if err != nil {
 		return nil, fmt.Errorf("feed: получение блокировок: %w", err)
 	}
-	liked, err := s.storage.LikedIDs(requesterID)
+	liked, err := s.storage.LikedIDsContext(ctx, requesterID)
 	if err != nil {
 		return nil, fmt.Errorf("feed: получение лайков: %w", err)
 	}
-	users, err := s.storage.ListUsers()
+	users, err := s.storage.ListUsersContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("feed: получение пользователей: %w", err)
 	}

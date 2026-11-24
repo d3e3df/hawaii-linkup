@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"hawaii-linkup/internal/config"
+	"hawaii-linkup/internal/repository/memory"
 )
 
 func testLogger() *slog.Logger {
@@ -133,13 +134,13 @@ func TestShutdownForcesCloseAfterGracePeriod(t *testing.T) {
 func TestNewServerValidatesConfig(t *testing.T) {
 	settings := config.Default()
 	settings.WriteTimeout = settings.CommandTimeout
-	if _, err := NewServer(settings, testLogger()); err == nil {
+	if _, err := NewServer(settings, testLogger(), memory.NewDemoStore()); err == nil {
 		t.Fatal("expected invalid server config error")
 	}
 }
 
 func TestNewServerHealth(t *testing.T) {
-	server, err := NewServer(config.Default(), testLogger())
+	server, err := NewServer(config.Default(), testLogger(), memory.NewDemoStore())
 	if err != nil {
 		t.Fatal(err)
 	}

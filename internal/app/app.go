@@ -11,13 +11,19 @@ import (
 
 	"hawaii-linkup/internal/adapter/profilehttp"
 	"hawaii-linkup/internal/config"
-	"hawaii-linkup/internal/repository/memory"
+	"hawaii-linkup/internal/repository/postgres"
 	"hawaii-linkup/internal/service/feed"
 	"hawaii-linkup/internal/service/reaction"
 	httpapi "hawaii-linkup/internal/transport/http"
 )
 
-func NewServer(settings config.Config, logger *slog.Logger) (*http.Server, error) {
+type Storage interface {
+	feed.UserStorage
+	reaction.Storage
+	httpapi.PairStorage
+}
+
+func NewServer(settings config.Config, logger *slog.Logger, store Storage) (*http.Server, error) {
 	if err := settings.Validate(); err != nil {
 		return nil, err
 	}
@@ -31,7 +37,6 @@ func NewServer(settings config.Config, logger *slog.Logger) (*http.Server, error
 	if err != nil {
 		return nil, err
 	}
-	store := memory.NewDemoStore()
 	handler := httpapi.NewHandler(
 		feed.NewService(store),
 		reaction.NewService(store, profiles),
@@ -50,7 +55,21 @@ func NewServer(settings config.Config, logger *slog.Logger) (*http.Server, error
 }
 
 func Run(ctx context.Context, settings config.Config, logger *slog.Logger) error {
-	server, err := NewServer(settings, logger)
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+	connectCtx, cancelConnect := context.WithTimeout(ctx, settings.DatabaseConnectTimeout)
+	defer cancelConnect()
+	pool, err := postgres.NewPool(connectCtx, postgres.Config{
+		DatabaseURL: settings.DatabaseURL,
+		MaxConns:    settings.DatabaseMaxConns,
+	})
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	store := postgres.NewStore(pool)
+	server, err := NewServer(settings, logger, store)
 	if err != nil {
 		return err
 	}

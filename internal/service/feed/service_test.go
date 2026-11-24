@@ -1,6 +1,7 @@
 package feed
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -18,17 +19,17 @@ type stubSource struct {
 	calls      int
 }
 
-func (s *stubSource) ListUsers() ([]domain.User, error) {
+func (s *stubSource) ListUsersContext(context.Context) ([]domain.User, error) {
 	s.calls++
 	return s.users, s.usersErr
 }
 
-func (s *stubSource) BlockedIDs(userID string) ([]string, error) {
+func (s *stubSource) BlockedIDsContext(context.Context, string) ([]string, error) {
 	s.calls++
 	return s.blocked, s.blockedErr
 }
 
-func (s *stubSource) LikedIDs(userID string) ([]string, error) {
+func (s *stubSource) LikedIDsContext(context.Context, string) ([]string, error) {
 	s.calls++
 	return s.liked, s.likedErr
 }
