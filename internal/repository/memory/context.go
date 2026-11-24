@@ -73,6 +73,9 @@ func (s *Store) UpdatePairProtected(
 	if next.Key != key {
 		return domain.Pair{}, fmt.Errorf("memory: %w: update changed key", domainerrors.ErrInvalidPairKey)
 	}
+	if next.IsMatch() && !current.HasActiveMatch() {
+		next.MatchState = domain.MatchStateActive
+	}
 	if next != current {
 		s.pairs[key] = next
 	}

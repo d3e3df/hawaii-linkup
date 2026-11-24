@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	domain "hawaii-linkup/internal/domain/models"
+	"hawaii-linkup/internal/service/eligibility"
 	"hawaii-linkup/internal/service/interaction"
 )
 
@@ -19,6 +20,12 @@ type Storage interface {
 		actorID, targetID string,
 		update func(current domain.Pair, actor, target domain.User, blocked bool) (domain.Pair, error),
 	) (domain.Pair, error)
+	WithdrawReaction(
+		ctx context.Context,
+		key domain.PairKey,
+		actorID, targetID string,
+		validate func(actor, target domain.User, blocked bool) error,
+	) (pair domain.Pair, changed, matchDeactivated bool, err error)
 }
 
 type ProfileProvider interface {
@@ -31,6 +38,13 @@ type Result struct {
 	Likes      int
 	Matched    bool
 	MatchedNow bool
+}
+
+type WithdrawResult struct {
+	Changed          bool
+	Likes            int
+	Matched          bool
+	MatchDeactivated bool
 }
 
 type Service struct {
@@ -65,7 +79,7 @@ func (s *Service) Like(ctx context.Context, actorID, targetID string) (Result, e
 		return Result{}, fmt.Errorf("reaction: обновление пары: %w", err)
 	}
 	var decision Decision
-	_, err = s.storage.UpdatePairProtected(ctx, key, actorID, targetID, func(current domain.Pair, protectedActor, protectedTarget domain.User, blocked bool) (domain.Pair, error) {
+	pair, err := s.storage.UpdatePairProtected(ctx, key, actorID, targetID, func(current domain.Pair, protectedActor, protectedTarget domain.User, blocked bool) (domain.Pair, error) {
 		decision, err = Transition(current, protectedActor, protectedTarget, blocked)
 		if err != nil {
 			return domain.Pair{}, err
@@ -79,8 +93,28 @@ func (s *Service) Like(ctx context.Context, actorID, targetID string) (Result, e
 	return Result{
 		Outcome:    decision.Outcome,
 		Changed:    decision.Changed,
-		Likes:      decision.Pair.LikeCount(),
-		Matched:    decision.Pair.IsMatch(),
-		MatchedNow: decision.Changed && decision.Pair.IsMatch(),
+		Likes:      pair.LikeCount(),
+		Matched:    pair.HasActiveMatch(),
+		MatchedNow: decision.Changed && pair.HasActiveMatch(),
+	}, nil
+}
+
+func (s *Service) Withdraw(ctx context.Context, actorID, targetID string) (WithdrawResult, error) {
+	if actorID == "" || targetID == "" {
+		return WithdrawResult{}, fmt.Errorf("%w: пустой ID пользователя", ErrInvalidRequest)
+	}
+	key := domain.NewPairKey(actorID, targetID)
+	pair, changed, deactivated, err := s.storage.WithdrawReaction(ctx, key, actorID, targetID, func(actor, target domain.User, blocked bool) error {
+		check := eligibility.Check(actor, target, blocked, false)
+		if !check.Allowed {
+			return &NotAllowedError{Reason: check.Reason}
+		}
+		return nil
+	})
+	if err != nil {
+		return WithdrawResult{}, fmt.Errorf("reaction: отзыв реакции: %w", err)
+	}
+	return WithdrawResult{
+		Changed: changed, Likes: pair.LikeCount(), Matched: pair.HasActiveMatch(), MatchDeactivated: deactivated,
 	}, nil
 }

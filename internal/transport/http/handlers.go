@@ -19,6 +19,7 @@ type DiscoveryService interface {
 
 type ReactionService interface {
 	Like(ctx context.Context, actorID, targetID string) (reaction.Result, error)
+	Withdraw(ctx context.Context, actorID, targetID string) (reaction.WithdrawResult, error)
 }
 
 type BlockService interface {
@@ -69,6 +70,7 @@ func NewHandler(
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.Handle("GET /v1/me/discovery", h.withIdentity(http.HandlerFunc(h.discover)))
 	mux.Handle("PUT /v1/me/likes/{targetID}", h.withIdentity(http.HandlerFunc(h.like)))
+	mux.Handle("DELETE /v1/me/likes/{targetID}", h.withIdentity(http.HandlerFunc(h.withdraw)))
 	mux.Handle("PUT /v1/me/blocks/{targetID}", h.withIdentity(http.HandlerFunc(h.block)))
 	mux.Handle("GET /v1/profiles/{userID}", h.withIdentity(http.HandlerFunc(h.getProfile)))
 	mux.Handle("PUT /v1/profiles/{userID}", h.withIdentity(http.HandlerFunc(h.updateProfile)))
@@ -130,6 +132,32 @@ func (h *Handler) like(w http.ResponseWriter, r *http.Request) {
 		Likes:      result.Likes,
 		Matched:    result.Matched,
 		MatchedNow: result.MatchedNow,
+	})
+}
+
+func (h *Handler) withdraw(w http.ResponseWriter, r *http.Request) {
+	targetID := r.PathValue("targetID")
+	if !validUserID(targetID) {
+		h.writeErrorCode(w, http.StatusBadRequest, "invalid_id", "Некорректный targetID")
+		return
+	}
+	if _, err := parseQuery(r.URL.RawQuery); err != nil || len(r.URL.Query()) != 0 {
+		h.writeErrorCode(w, http.StatusBadRequest, "invalid_query", "Query-параметры запрещены")
+		return
+	}
+	if rejectBody(r) != nil {
+		h.writeErrorCode(w, http.StatusBadRequest, "body_not_allowed", "Тело запроса запрещено")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), h.commandTimeout)
+	defer cancel()
+	result, err := h.reactions.Withdraw(ctx, actorID(r.Context()), targetID)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, withdrawResponse{
+		Changed: result.Changed, Likes: result.Likes, Matched: result.Matched, MatchDeactivated: result.MatchDeactivated,
 	})
 }
 

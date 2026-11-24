@@ -111,6 +111,44 @@ func (f *fakeStorage) UpdatePairProtected(
 	return next, nil
 }
 
+func (f *fakeStorage) WithdrawReaction(
+	_ context.Context,
+	key domain.PairKey,
+	actorID, _ string,
+	validate func(actor, target domain.User, blocked bool) error,
+) (domain.Pair, bool, bool, error) {
+	actor, err := f.GetUser(actorID)
+	if err != nil {
+		return domain.Pair{}, false, false, err
+	}
+	target, err := f.GetUser(key.High)
+	if actorID == key.High {
+		target, err = f.GetUser(key.Low)
+	}
+	if err != nil {
+		return domain.Pair{}, false, false, err
+	}
+	if err := validate(actor, target, f.blocked); err != nil {
+		return domain.Pair{}, false, false, err
+	}
+	current, err := f.LoadPair(key)
+	if err != nil {
+		return domain.Pair{}, false, false, err
+	}
+	changed := current.HasLiked(actorID)
+	deactivated := current.HasActiveMatch()
+	next := current.WithoutLike(actorID)
+	if deactivated {
+		next.MatchState = domain.MatchStateInactive
+	}
+	if changed || deactivated {
+		if err := f.SavePair(next); err != nil {
+			return domain.Pair{}, false, false, err
+		}
+	}
+	return next, changed, deactivated, nil
+}
+
 var errStorage = errors.New("storage is down")
 
 var abKey = domain.NewPairKey("a", "b")
@@ -254,5 +292,44 @@ func TestLike_SaveErrorIsNotSuccess(t *testing.T) {
 	}
 	if _, saved := fake.pairs[abKey]; saved {
 		t.Fatal("при отказе записи состояние не должно измениться")
+	}
+}
+
+func TestWithdrawDeletesOnlyOwnReactionAndDeactivatesMatch(t *testing.T) {
+	fake := newFake()
+	fake.pairs[abKey] = domain.NewPair(abKey).WithLike("a").WithLike("b")
+
+	got, err := newTestService(fake).Withdraw(context.Background(), "a", "b")
+
+	want := WithdrawResult{Changed: true, Likes: 1, MatchDeactivated: true}
+	if err != nil || got != want {
+		t.Fatalf("result=%+v err=%v", got, err)
+	}
+	pair := fake.pairs[abKey]
+	if pair.HasLiked("a") || !pair.HasLiked("b") || pair.HasActiveMatch() {
+		t.Fatalf("pair=%+v", pair)
+	}
+}
+
+func TestWithdrawRepeatIsNoOp(t *testing.T) {
+	fake := newFake()
+	fake.pairs[abKey] = domain.NewPair(abKey).WithLike("b")
+
+	got, err := newTestService(fake).Withdraw(context.Background(), "a", "b")
+
+	if err != nil || got != (WithdrawResult{Likes: 1}) || fake.saves != 0 {
+		t.Fatalf("result=%+v saves=%d err=%v", got, fake.saves, err)
+	}
+	if !fake.pairs[abKey].HasLiked("b") {
+		t.Fatal("other user reaction was removed")
+	}
+}
+
+func TestWithdrawRechecksEligibility(t *testing.T) {
+	fake := newFake()
+	fake.blocked = true
+	_, err := newTestService(fake).Withdraw(context.Background(), "a", "b")
+	if !errors.Is(err, ErrNotAllowed) || fake.saves != 0 {
+		t.Fatalf("err=%v saves=%d", err, fake.saves)
 	}
 }
